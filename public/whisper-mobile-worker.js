@@ -1,7 +1,17 @@
-import { pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0";
-
 let transcriber;
 let loading;
+let transformersModule;
+let transformersLoading;
+
+const TRANSFORMERS_SOURCES = [
+  "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1",
+  "https://esm.sh/@huggingface/transformers@3.8.1?bundle",
+];
+
+const WHISPER_MODELS = [
+  "onnx-community/whisper-base",
+  "Xenova/whisper-base",
+];
 
 function post(id, stage, fraction, detail) {
   self.postMessage({ id, type: "progress", stage, fraction, detail });
@@ -57,32 +67,83 @@ function qualityScore(text, segments, durationSeconds) {
   return Math.max(0, Math.min(1, quality));
 }
 
+async function loadTransformers(id) {
+  if (transformersModule) return transformersModule;
+  if (!transformersLoading) {
+    transformersLoading = (async () => {
+      let lastError;
+      for (let index = 0; index < TRANSFORMERS_SOURCES.length; index += 1) {
+        const source = TRANSFORMERS_SOURCES[index];
+        try {
+          post(id, "Loading on-device Whisper engine", undefined, index === 0 ? "Loading Transformers.js" : "Primary CDN unavailable; trying backup CDN");
+          const module = await import(source);
+          if (typeof module.pipeline !== "function") throw new Error("Transformers.js pipeline export was not found.");
+          if (module.env) {
+            module.env.allowLocalModels = false;
+            module.env.useBrowserCache = true;
+          }
+          transformersModule = module;
+          return module;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      const detail = lastError instanceof Error ? lastError.message : String(lastError || "unknown error");
+      throw new Error(`Could not load the free on-device Whisper engine (${detail}). First use needs internet access.`);
+    })().finally(() => { transformersLoading = undefined; });
+  }
+  return transformersLoading;
+}
+
+async function createPipeline(id) {
+  const { pipeline } = await loadTransformers(id);
+  const hasWebGpu = Boolean(self.navigator && "gpu" in self.navigator);
+  const attempts = [];
+  if (hasWebGpu) attempts.push({ device: "webgpu", dtype: "q4", label: "WebGPU" });
+  attempts.push({ device: undefined, dtype: "q8", label: "WASM/CPU" });
+
+  let lastError;
+  for (const attempt of attempts) {
+    for (const model of WHISPER_MODELS) {
+      try {
+        post(id, "Downloading / loading Whisper Base", undefined, `${attempt.label} · ${model} · one-time model setup; cached by your browser`);
+        const options = {
+          dtype: attempt.dtype,
+          progress_callback(info) {
+            const fraction = typeof info.progress === "number" ? info.progress / 100 : undefined;
+            post(id, "Downloading / loading Whisper Base", fraction, info.file || info.status || `${attempt.label} · model files are cached after first use`);
+          },
+        };
+        if (attempt.device) options.device = attempt.device;
+        const value = await pipeline("automatic-speech-recognition", model, options);
+        return { value, engine: attempt.label, model };
+      } catch (error) {
+        lastError = error;
+        post(id, "Whisper engine fallback", undefined, `${attempt.label} could not start with ${model}; trying another local configuration`);
+      }
+    }
+  }
+
+  const detail = lastError instanceof Error ? lastError.message : String(lastError || "unknown error");
+  throw new Error(`Whisper Base could not be loaded (${detail}). Check internet access for the first model download, then retry.`);
+}
+
 async function load(id) {
   if (transcriber) return transcriber;
   if (!loading) {
-    const options = {
-      dtype: "q8",
-      progress_callback(info) {
-        const fraction = typeof info.progress === "number" ? info.progress / 100 : undefined;
-        post(id, "Downloading / loading Whisper Base", fraction, info.file || info.status || "One-time model setup; cached by your browser");
-      },
-    };
-    if (self.navigator && "gpu" in self.navigator) {
-      options.device = "webgpu";
-      options.dtype = "q4";
-    }
-    loading = pipeline("automatic-speech-recognition", "Xenova/whisper-base", options).then((value) => {
-      transcriber = value;
-      return value;
+    loading = createPipeline(id).then((loaded) => {
+      transcriber = loaded;
+      return loaded;
     }).finally(() => { loading = undefined; });
   }
   return loading;
 }
 
 async function run(id, audio, language, retry = false) {
-  const model = await load(id);
+  const loaded = await load(id);
+  const model = loaded.value;
   post(id, retry ? "Refining a weak transcription" : "Transcribing vocals on device", undefined,
-    retry ? "Retrying with shorter chunks and automatic language detection" : ((self.navigator && "gpu" in self.navigator) ? "WebGPU acceleration active" : "WASM/CPU mode"));
+    retry ? "Retrying with shorter chunks and automatic language detection" : `${loaded.engine} acceleration active`);
   const options = {
     return_timestamps: true,
     chunk_length_s: retry ? 20 : 30,
@@ -96,7 +157,7 @@ async function run(id, audio, language, retry = false) {
   const text = segments.length ? segments.map((item) => item.text).join("\n") : cleanText(output.text);
   const duration = audio.length / 16000;
   const quality = qualityScore(text, segments, duration);
-  return { text, segments, duration, quality };
+  return { text, segments, duration, quality, engine: loaded.engine, modelId: loaded.model };
 }
 
 self.addEventListener("message", async (event) => {
@@ -122,13 +183,17 @@ self.addEventListener("message", async (event) => {
         language: message.language || "auto",
         duration: best.duration,
         segments: best.segments,
-        model: "Whisper Base · multilingual · on-device browser",
+        model: `Whisper Base · multilingual · on-device browser · ${best.modelId}`,
         qualityScore: best.quality,
         qualityLabel: best.quality < 0.55 ? "low" : "standard",
-        engine: (self.navigator && "gpu" in self.navigator) ? "WebGPU" : "WASM",
+        engine: best.engine,
       },
     });
   } catch (error) {
-    self.postMessage({ id, type: "error", error: error instanceof Error ? error.message : String(error) });
+    const raw = error instanceof Error ? error.message : String(error);
+    const friendly = /failed to fetch|networkerror|load failed/i.test(raw)
+      ? "Whisper model download failed. First use needs internet access to the Transformers.js CDN and Hugging Face model files. Check your connection or private-DNS/ad-blocker settings, then retry."
+      : raw;
+    self.postMessage({ id, type: "error", error: friendly });
   }
 });

@@ -1,4 +1,4 @@
-const CACHE = "fdgrc-tag-studio-v1.6.2.2";
+const CACHE = "fdgrc-tag-studio-v1.6.2.3";
 const SHELL = ["/"];
 
 self.addEventListener("install", (event) => {

@@ -105,6 +105,22 @@ export async function transcribeInBrowser(
   const currentWorker = getWorker();
 
   return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      currentWorker.removeEventListener("message", handler);
+      currentWorker.removeEventListener("error", workerError);
+      currentWorker.removeEventListener("messageerror", workerMessageError);
+    };
+    const workerError = (event: ErrorEvent) => {
+      cleanup();
+      const detail = event.message || "The mobile Whisper worker could not start.";
+      reject(new Error(/failed to fetch|networkerror|load failed/i.test(detail)
+        ? "The on-device Whisper engine could not be downloaded. First use needs internet access; retry after checking your connection."
+        : detail));
+    };
+    const workerMessageError = () => {
+      cleanup();
+      reject(new Error("The browser could not pass audio to the on-device Whisper worker. Try closing other tabs and retrying."));
+    };
     const handler = (event: MessageEvent<WorkerReply>) => {
       const message = event.data;
       if (!message || message.id !== id) return;
@@ -112,7 +128,7 @@ export async function transcribeInBrowser(
         onProgress?.({ stage: message.stage, fraction: message.fraction, detail: message.detail });
         return;
       }
-      currentWorker.removeEventListener("message", handler);
+      cleanup();
       if (message.type === "error") reject(new Error(message.error));
       else resolve({
         ...message.result,
@@ -124,6 +140,8 @@ export async function transcribeInBrowser(
       });
     };
     currentWorker.addEventListener("message", handler);
+    currentWorker.addEventListener("error", workerError);
+    currentWorker.addEventListener("messageerror", workerMessageError);
     currentWorker.postMessage({ id, type: "transcribe", audio, language }, [audio.buffer]);
   });
 }

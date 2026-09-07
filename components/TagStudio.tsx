@@ -917,7 +917,7 @@ export default function TagStudio() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-semibold tracking-tight">fdgrc Tag Studio</h1>
-                <span className="version-badge">V1.6.2</span>
+                <span className="version-badge">V1.6.2.3</span>
               </div>
               <p className="muted-soft text-xs">Smart MP3 metadata + lyrics + cover art editor</p>
             </div>
