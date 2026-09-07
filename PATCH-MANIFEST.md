@@ -1,24 +1,10 @@
-# AudioTags V1.6.2 changes-only patch
+# AudioTags V1.6.2 build-fix patch
 
-Overlay these files on V1.6.1.
+Copy these files into the repository, preserving the folders:
 
-Changed/new files: 18
+- `lib/audio/songArtLocal.ts`
+- `lib/audio/localArt.ts`
 
-- `README.md`
-- `CHANGELOG-V1.6.2.md`
-- `package.json`
-- `.dev.vars.example`
-- `MOBILE-WHISPER.md`
-- `.env.example`
-- `LOCAL-TRANSCRIBER.md`
-- `CLOUDFLARE.md`
-- `components/TagStudio.tsx`
-- `public/sw.js`
-- `public/whisper-mobile-worker.js`
-- `public/MOBILE-WHISPER.md`
-- `public/LOCAL-TRANSCRIBER.md`
-- `app/api/health/route.ts`
-- `app/api/transcribe/route.ts`
-- `app/api/artwork/generate/route.ts`
-- `app/api/song/analyze/route.ts`
-- `lib/audio/browserWhisper.ts`
+This directly fixes Cloudflare's `UNLOADABLE_DEPENDENCY` errors from `components/TagStudio.tsx`.
+
+No existing file needs to be deleted or edited. After committing/pushing these files, rerun the existing Cloudflare deployment.
