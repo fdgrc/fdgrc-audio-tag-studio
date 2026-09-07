@@ -4,8 +4,8 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     app: "fdgrc Tag Studio",
-    version: "1.6.2.4",
+    version: "1.6.5",
     runtime: "Cloudflare Workers compatible via vinext",
-    transcription: "On-device browser Whisper Base + desktop WhisperHallu/WhisperTimeSync",
+    transcription: "On-device whisper.cpp WASM + desktop WhisperHallu/WhisperTimeSync",
   });
 }

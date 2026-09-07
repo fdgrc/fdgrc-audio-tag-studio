@@ -1,49 +1,55 @@
-# Cloudflare Workers deployment — V1.6.2
+# Cloudflare Workers deployment — V1.6.4
 
-V1.6.2 keeps **Cloudflare Workers + vinext**, but paid AI APIs are no longer part of the hosted Worker.
+V1.6.4 keeps **Cloudflare Workers + vinext** and requires no paid AI API.
 
 ## Build settings
 
-- **Build command:** `npm run build:vinext`
-- **Deploy command:** `npm run deploy:built`
-- **Root directory:** `/`
-
-The Worker name remains `audiotags` in `wrangler.jsonc`. If your Cloudflare Worker has a different name, make them match.
-
-## No OpenAI secret
-
-You do **not** need `OPENAI_API_KEY` or any OpenAI model variables.
-
-The only optional environment variable is:
-
-```env
-MUSICBRAINZ_USER_AGENT="AudioTags/1.6.2 (you@example.com)"
+```text
+Build command:  npm run build:vinext
+Deploy command: npm run deploy:built
+Root:           /
 ```
 
-## Request flow
+`wrangler.jsonc` intentionally keeps its compatibility date pinned so Cloudflare never sees a future UTC date during deployment.
+
+## Optional environment variable
 
 ```text
-Cloudflare-hosted browser app
-  ├─ MP3 parsing / playback / ID3 / ZIP          → browser only
-  ├─ metadata and official covers                → MusicBrainz / Cover Art Archive
-  ├─ lyrics lookup                               → LRCLIB
-  ├─ lyrics-aware theme/art concepts             → browser only
-  ├─ procedural 1024×1024 cover rendering        → browser only
-  └─ Transcribe audio
-       └─ http://127.0.0.1:8765 on user's PC
-            ├─ WhisperHallu
-            └─ WhisperTimeSync
+MUSICBRAINZ_USER_AGENT="AudioTags/1.6.4 (you@example.com)"
 ```
 
-Modern browsers can ask the user for permission before an HTTPS site accesses a loopback/local service. Allow that permission for AudioTags when prompted; the local helper is bound only to `127.0.0.1` and additionally requires its pairing token.
+There is no `OPENAI_API_KEY` requirement.
 
-## Useful hosted routes
+## V1.6.4 whisper.cpp architecture
 
-- `/`
-- `/api/health`
-- `/api/artwork/search`
-- `/api/artwork/image`
-- `/api/metadata/search`
-- `/api/lyrics/search`
+The browser/PWA receives the whisper.cpp JavaScript/WebAssembly runtime from the normal application bundle. No Transformers.js runtime is fetched at runtime.
 
-The legacy `/api/transcribe`, `/api/song/analyze`, and `/api/artwork/generate` paths remain only as disabled `410 Gone` stubs so a V1.6 changes-only overlay cannot accidentally leave paid endpoints active.
+`npm run build:vinext` first runs `npm run prepare:whisper`. That script downloads and SHA-256 verifies Tiny Q5 from free public sources, splits it into ~8 MB files, and places them under `public/whisper-models/` so Cloudflare can serve them as normal static assets.
+
+Preferred first-use path:
+
+```text
+Browser
+  -> /whisper-models/tiny-q5_1/manifest.json
+  -> /whisper-models/tiny-q5_1/part-000.bin ...
+```
+
+If model preparation could not complete during the build, the browser falls back to `/api/whisper-ggml?model=<model>`, which streams from free public sources without buffering the entire model in Worker memory. The phone caches the reconstructed model in IndexedDB when possible. Base Q5 uses the fallback route unless you set `AUDIOTAGS_BUNDLE_BASE_WHISPER=1` during the build.
+
+V1.6.4 also adds these response headers through `next.config.ts` because the official whisper.cpp WASM build uses pthreads/SharedArrayBuffer:
+
+```text
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Resource-Policy: same-origin
+```
+
+After the first V1.6.4 deployment, fully close and reopen an installed PWA once so the top-level page is loaded with those headers.
+
+## Manual no-cost fallback
+
+The AudioTags transcription panel includes **Import model .bin**. This lets a device use a locally obtained `ggml-tiny-q5_1.bin` or `ggml-base-q5_1.bin` even if every automatic model host is blocked. The model is then cached locally by AudioTags.
+
+## Smart Fix
+
+Smart Fix uses MusicBrainz first and Apple Search as a no-key fallback. MusicBrainz calls remain client-paced at about one request per second during batch scans.

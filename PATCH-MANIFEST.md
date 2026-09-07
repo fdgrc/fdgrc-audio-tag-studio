@@ -1,17 +1,20 @@
-# AudioTags V1.6.2.4 changes-only patch
+# V1.6.5 changes-only overlay
 
-Overlay this ZIP on top of V1.6.2.3 (or the V1.6.2.3 build-fixed project).
+Overlay this package on V1.6.4. It is GitHub-web-upload-safe: no path in this ZIP contains `[` or `]`.
 
-Changed/new files:
+Files included:
 
-- `package.json` — version bump to 1.6.2.4
-- `public/sw.js` — PWA cache bump
-- `public/whisper-mobile-worker.js` — removes direct third-party browser downloads and uses AudioTags same-origin relay endpoints
-- `app/api/health/route.ts` — version bump
-- `app/api/whisper-runtime/[...path]/route.ts` — allow-listed server-side relay for Transformers.js + ONNX WASM runtime
-- `app/api/whisper-model/[...path]/route.ts` — allow-listed server-side relay for Whisper Base model files
-- `README.md` — updated mobile setup/relay notes
-- `MOBILE-WHISPER.md` — network reliability notes
-- `BUILD-FIX-V1.6.2.4.md` — fix summary
+- `CHANGELOG-V1.6.5.md`
+- `CLOUDFLARE.md`
+- `GITHUB-WEB-UPLOAD.md`
+- `MOBILE-WHISPER.md`
+- `app/api/health/route.ts`
+- `app/api/whisper-ggml/route.ts`
+- `components/TagStudio.tsx`
+- `lib/audio/browserWhisper.ts`
+- `package.json`
+- `public/MOBILE-WHISPER.md`
+- `public/sw.js`
+- `scripts/prepare-whisper-model.mjs`
 
-No files need to be deleted for this patch.
+Older dynamic Whisper route files may remain in your repository; V1.6.5 does not call them.

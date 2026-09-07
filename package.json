@@ -1,20 +1,21 @@
 {
   "name": "fdgrc-tag-studio",
-  "version": "1.6.2.4",
+  "version": "1.6.5",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "dev:vinext": "vinext dev",
-    "build:vinext": "vinext build",
+    "build:vinext": "npm run prepare:whisper && vinext build",
     "start:vinext": "vinext start",
     "check:vinext": "vinext check",
     "preview:worker": "npm run build:vinext && wrangler dev --config dist/server/wrangler.json",
     "deploy": "vinext-cloudflare deploy",
     "cf-typegen": "wrangler types",
     "lint": "eslint .",
-    "deploy:built": "vinext-cloudflare deploy --skip-build"
+    "deploy:built": "vinext-cloudflare deploy --skip-build",
+    "prepare:whisper": "node scripts/prepare-whisper-model.mjs"
   },
   "dependencies": {
     "browser-id3-writer": "6.4.0",
@@ -24,7 +25,8 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-server-dom-webpack": "19.2.8",
-    "vinext": "1.0.0-beta.9"
+    "vinext": "1.0.0-beta.9",
+    "@timur00kh/whisper.wasm": "0.1.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",

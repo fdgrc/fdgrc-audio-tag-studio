@@ -1,46 +1,64 @@
-# AudioTags V1.6.2 — On-device mobile Whisper
+# AudioTags V1.6.4 — On-device whisper.cpp
 
-AudioTags can now transcribe directly in a supported mobile browser/PWA with no paid API and no desktop helper.
+V1.6.4 removes the fragile Transformers.js/ONNX mobile path and replaces it with **whisper.cpp WebAssembly + GGML models**, matching the model family used by the SynthIQ mobile Auto Lyrics feature.
 
-## How it works
+## What changed
 
-The implementation adapts the behavior proven in the supplied SynthIQ Hybrid Music Auto Lyrics engine:
+- No Transformers.js runtime download.
+- No ONNX model shards.
+- No OpenAI key or paid transcription API.
+- The whisper.cpp WebAssembly runtime is installed as a normal project dependency at build time.
+- The Cloudflare build prepares the Tiny Q5 GGML model as small same-origin static chunks whenever a public model source is reachable.
+- The browser loads those chunks from your own AudioTags site first and caches the reconstructed model in IndexedDB.
+- The MP3 itself never needs to be uploaded for transcription.
 
-- multilingual Whisper Base by default
-- one-time model download, then browser caching
-- audio converted locally to 16 kHz mono
-- lightweight high-pass + peak normalization before transcription
-- timed segments
-- duplicate/non-lyric cue cleanup
-- automatic retry when the first pass scores poorly
-- a quality score before the result is offered for use
+## Mobile models
 
-The web edition uses Transformers.js + ONNX Runtime in a Web Worker because an Android AAR cannot execute inside a normal Cloudflare-hosted web page. WebGPU is used when available; otherwise it falls back to WASM/CPU.
+- **Tiny Q5 · 31 MB** — recommended default for phones/tablets.
+- **Base Q5 · 57 MB** — better lyric recognition on newer devices, but uses more memory and CPU.
 
-## Mobile steps
+The preferred first-run path is static and same-origin:
 
-1. Open the deployed AudioTags site on Android or iPhone/iPad.
-2. Install it as a PWA if desired.
-3. Import an MP3.
-4. Open `Audio → Lyrics & Captions`.
-5. Choose `On this device`.
-6. Tap `Transcribe audio`.
-7. The first transcription downloads Whisper Base. Later uses reuse the browser cache where the browser permits it.
-8. Keep the page open while transcription runs.
-9. Review the result, then choose `Use as lyrics` or download LRC/SRT/VTT.
+```text
+/whisper-models/tiny-q5_1/manifest.json
+/whisper-models/tiny-q5_1/part-000.bin
+/whisper-models/tiny-q5_1/part-001.bin
+...
+```
 
-## Performance
+If those build-prepared chunks are unavailable, AudioTags falls back to `/api/whisper-ggml?model=<model>`, which streams from free public whisper.cpp model sources. Your phone still talks only to the AudioTags origin.
 
-- WebGPU-capable phones/tablets are strongly preferred.
-- WASM/CPU mode is supported as a fallback but is slower.
-- AudioTags currently limits browser transcription to 15-minute files to protect mobile memory.
-- The source MP3 and decoded waveform stay on the device. Model files are downloaded from Hugging Face.
+## First run
 
-## Desktop
+1. Deploy V1.6.4.
+2. Fully close the old installed PWA/browser tab and reopen it once. V1.6.4 adds the COOP/COEP headers required for whisper.cpp pthreads.
+3. Import a track.
+4. Choose **On this device — no pairing**.
+5. Start with **Tiny Q5 · 31 MB**.
+6. Tap **Transcribe audio**.
 
-The original V1.6.1 WhisperHallu + WhisperTimeSync local helper remains available as the `Desktop helper` engine and can be preferred for higher-end desktop hardware.
+The model is cached on the device after the first successful load when browser storage allows it. Use **Check model delivery** in the transcription panel to verify whether the device sees the bundled static model, the free relay, or an existing device cache.
 
+## Offline/manual model fallback
 
-## V1.6.2.4 network reliability fix
+If a network/provider blocks every automatic source, use **Import model .bin** in AudioTags and select a whisper.cpp GGML file for the model you chose. The selected file is stored in the AudioTags model cache on that device.
 
-The phone no longer imports Transformers.js or downloads Whisper model files directly from third-party domains. AudioTags uses same-origin endpoints under `/api/whisper-runtime/` and `/api/whisper-model/` which relay only the allow-listed public runtime/model files. This avoids many mobile private-DNS, tracking protection, ad-blocker, and cross-origin failures while keeping transcription on-device.
+Supported filenames are normally:
+
+```text
+ggml-tiny-q5_1.bin
+ggml-base-q5_1.bin
+```
+
+This fallback does not require an API key, subscription, or desktop pairing token.
+
+## Browser requirements
+
+whisper.cpp's browser build uses WebAssembly SIMD and pthreads. AudioTags sends the required:
+
+```text
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Older browsers or low-memory devices may still be unable to initialize the model. Tiny Q5 is the safest mobile option. The optional desktop WhisperHallu + WhisperTimeSync helper remains available for difficult songs or older devices.
