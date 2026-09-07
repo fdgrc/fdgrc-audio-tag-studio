@@ -1,84 +1,79 @@
-# fdgrc Tag Studio V1.6 — Cloudflare Workers Edition
+# fdgrc Tag Studio V1.6.2 — No-Payment Edition
 
-Privacy-first MP3 metadata, cover-art, Smart Fix, lyrics/caption, and batch editor built with Next.js 16 for **Cloudflare Workers using vinext**.
+Privacy-first MP3 metadata, cover-art, Smart Fix, lyrics/caption, batch, and local transcription editor built with Next.js 16 for **Cloudflare Workers using vinext**.
 
-## V1.6 highlights
+## The important change
 
-### Audio → Lyrics & Captions
-- Explicit cloud transcription button for the selected audio file
-- OpenAI `gpt-transcribe` by default
-- Artist/title/album context is supplied to improve song transcription
-- Optional language hint
-- Review transcript before copying it into the Lyrics tag
-- Download TXT, LRC, SRT, or VTT
-- Saving an MP3 with a timed AI transcript embeds synchronized ID3 `SYLT` lyrics in addition to normal `USLT` lyrics
+**No OpenAI API key and no paid AI API are required.**
 
-### AI Art Director
-- Analyze artist, title, album, and approved lyrics/transcript
-- Returns mood, energy, themes, imagery, palette, and 3–4 original cover concepts
-- Lyrics are analyzed into visual themes before image generation; the image endpoint does not need the verbatim lyrics
-- Pick a concept, add custom visual direction, and optionally request title/artist typography
-- Generate an original 1024×1024 cover using `gpt-image-2` by default
-- Generated art stays a preview until **Use as cover** is clicked
+V1.6.2 uses:
 
-### Everything from V1.5
-- Smart Fix via MusicBrainz with confidence review
-- batch editing and ZIP export
-- metadata quality, album grouping, duplicates, folder import
-- MusicBrainz + Cover Art Archive artwork suggestions
-- crop/resize/compress cover utilities
-- LRCLIB lyrics lookup
-- installable PWA
-- Light / System / Dark theme
+- **Whisper Base in the browser/PWA** for no-payment on-device mobile transcription
+- optional **WhisperHallu** for desktop music-oriented preprocessing and transcription
+- optional **WhisperTimeSync** for desktop timestamp alignment
+- **MusicBrainz + Cover Art Archive** for official metadata/artwork suggestions
+- **LRCLIB** for lyrics lookup
+- local browser heuristics for lyrics-aware mood/theme/art concepts
+- local Canvas rendering for original 1024×1024 concept covers
 
-## Privacy model
+The hosted Cloudflare Worker never receives the MP3 for transcription. On mobile/PWA, transcription runs directly in the browser; desktop users can optionally use the local helper.
 
-By default MP3 parsing, ID3 editing/writing, cover editing/embedding, playback, library analysis, and ZIP generation remain local in the browser.
+## Audio → Lyrics & Captions
 
-Cloud calls happen only when you invoke them:
+**Mobile/PWA:** import a track, choose **On this device**, and press **Transcribe audio**. The first run downloads Whisper Base and later runs reuse the browser cache when available.
 
-- MusicBrainz / Cover Art Archive: metadata text and duration
-- LRCLIB: metadata text and duration
-- **Transcribe audio:** selected audio file is sent through your Worker to your configured OpenAI project
-- **Analyze song:** artist/title/album plus approved lyrics or transcript are sent to OpenAI
-- **Generate cover:** only the derived art concept, metadata context, and your custom visual direction are sent to image generation
+**Desktop helper (optional):** install/start `LOCAL-TRANSCRIBER.md`, choose **Desktop helper**, then pair it with AudioTags.
 
-`OPENAI_API_KEY` must remain server-side and should be configured as a Cloudflare secret/environment variable, never exposed through a `NEXT_PUBLIC_` variable.
+Outputs include TXT, LRC, SRT and VTT. Saving the MP3 can embed ordinary `USLT` lyrics and synchronized `SYLT` lyrics when timed segments are available.
 
-## Quick start
+## Lyrics-aware Art Director
 
-```bash
-npm install
-cp .env.example .env.local
-npm run dev
+Song analysis now runs locally in the browser. It turns artist/title/lyrics into mood, themes, palette and three cover concepts without sending lyrics to an LLM. The selected concept can be rendered as an original square cover locally in Canvas, or you can continue using official artwork search.
+
+## Cloudflare deployment
+
+Your existing settings stay the same:
+
+```text
+Build command:  npm run build:vinext
+Deploy command: npm run deploy:built
+Root directory: /
 ```
 
-Cloudflare/vinext:
+No AI secret is needed in Cloudflare.
 
-```bash
-npm install
-npm run check:vinext
-npm run dev:vinext
-npm run build:vinext
-```
-
-## Environment variables
+Optional MusicBrainz identification:
 
 ```env
-MUSICBRAINZ_USER_AGENT="fdgrc-tag-studio/1.6 (you@example.com)"
-LRCLIB_USER_AGENT="fdgrc-tag-studio/1.6 (you@example.com)"
-OPENAI_API_KEY="sk-..."
-OPENAI_TRANSCRIBE_MODEL="gpt-transcribe"
-OPENAI_TEXT_MODEL="gpt-5.6-luna"
-OPENAI_IMAGE_MODEL="gpt-image-2"
+MUSICBRAINZ_USER_AGENT="AudioTags/1.6.2 (you@example.com)"
 ```
 
-Only `OPENAI_API_KEY` is secret.
+## Local development
+
+```bash
+npm install
+npm run dev:vinext
+```
+
+## Local transcriber
+
+See [`LOCAL-TRANSCRIBER.md`](./LOCAL-TRANSCRIBER.md).
+
+The project intentionally does not vendor the WhisperHallu or WhisperTimeSync repositories. Their current GitHub repository metadata does not declare a license. The setup helper clones those upstream repositories directly for local use so their source is not repackaged inside AudioTags.
 
 ## Important ID3 limitation
 
-`browser-id3-writer` replaces the existing ID3 tag. V1.6 reads and rewrites the fields exposed by this editor and now supports both `USLT` and AI-generated `SYLT`, but uncommon/private/unsupported ID3 frames may still be lost. Keep original files.
+`browser-id3-writer` replaces the existing ID3 tag. AudioTags reads and rewrites the fields exposed by this editor and supports `USLT` and `SYLT`, but uncommon/private/unsupported ID3 frames may still be lost. Keep original files.
 
 ## Credits
 
 Developed by Ferdinand Degracia — AI Assisted Engineering
+
+Local transcription integrations reference:
+- https://github.com/EtienneAb3d/WhisperHallu
+- https://github.com/EtienneAb3d/WhisperTimeSync
+
+
+## V1.6.2 mobile Whisper
+
+AudioTags can now transcribe directly on supported phones/tablets in the browser/PWA with Whisper Base. No paid API and no desktop computer are required for this mode. WebGPU is preferred; WASM/CPU is the fallback. The existing WhisperHallu + WhisperTimeSync desktop helper remains available as an optional engine. See `MOBILE-WHISPER.md`.

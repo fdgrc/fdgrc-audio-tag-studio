@@ -15,7 +15,10 @@ import { readTrack } from "@/lib/audio/readMetadata";
 import { suggestedOutputName, writeMp3 } from "@/lib/audio/writeId3";
 import { cleanEditableTags, guessTagsFromFileName } from "@/lib/audio/guessTags";
 import { cloneCover, optimizeCover } from "@/lib/audio/coverTools";
+import { analyzeSongLocally } from "@/lib/audio/songArtLocal";
+import { renderLocalConceptCover } from "@/lib/audio/localArt";
 import { segmentsToLrc, segmentsToSrt, segmentsToVtt } from "@/lib/audio/captions";
+import { browserWhisperSupport, transcribeInBrowser, type BrowserWhisperProgress } from "@/lib/audio/browserWhisper";
 import {
   albumKey,
   albumLabel,
@@ -62,6 +65,7 @@ const smartFieldLabels: Partial<Record<keyof EditableTags, string>> = {
 
 type ThemeMode = "light" | "system" | "dark";
 type TrackFilter = "all" | "missing-tags" | "missing-cover" | "duplicates" | "edited";
+type TranscriptionEngine = "browser" | "desktop";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -92,15 +96,14 @@ function downloadText(text: string, name: string, type = "text/plain;charset=utf
   downloadBlob(new Blob([text], { type }), name);
 }
 
-function base64ToArrayBuffer(value: string) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes.buffer;
-}
 
 function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function fetchLoopback(url: string, init?: RequestInit) {
+  const options = { ...(init || {}), mode: "cors", targetAddressSpace: "loopback" } as RequestInit & { targetAddressSpace: "loopback" };
+  return fetch(new Request(url, options));
 }
 
 function revokeCover(cover?: CoverAsset) {
@@ -165,8 +168,15 @@ export default function TagStudio() {
   const [batchScanning, setBatchScanning] = useState(false);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [transcriptions, setTranscriptions] = useState<Record<string, TranscriptionResult>>({});
-  const [transcriptionLanguage, setTranscriptionLanguage] = useState("");
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState("en");
+  const [transcriptionModel, setTranscriptionModel] = useState("small");
+  const [transcriptionEngine, setTranscriptionEngine] = useState<TranscriptionEngine>("browser");
+  const [browserWhisperReady, setBrowserWhisperReady] = useState<boolean | null>(null);
+  const [browserWhisperProgress, setBrowserWhisperProgress] = useState<BrowserWhisperProgress>();
   const [transcribeLoading, setTranscribeLoading] = useState(false);
+  const [localTranscriberUrl, setLocalTranscriberUrl] = useState("http://127.0.0.1:8765");
+  const [localTranscriberToken, setLocalTranscriberToken] = useState("");
+  const [localTranscriberReady, setLocalTranscriberReady] = useState<boolean | null>(null);
   const [songAnalyses, setSongAnalyses] = useState<Record<string, SongAnalysis>>({});
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [conceptChoice, setConceptChoice] = useState<Record<string, string>>({});
@@ -236,6 +246,18 @@ export default function TagStudio() {
     if (current === "light" || current === "dark" || current === "system") setTheme(current);
 
     if (folderInput.current) folderInput.current.setAttribute("webkitdirectory", "");
+    try {
+      const savedUrl = localStorage.getItem("audiotags-local-transcriber-url");
+      const savedToken = localStorage.getItem("audiotags-local-transcriber-token");
+      const savedEngine = localStorage.getItem("audiotags-transcription-engine");
+      if (savedUrl) setLocalTranscriberUrl(savedUrl);
+      if (savedToken) setLocalTranscriberToken(savedToken);
+      if (savedEngine === "browser" || savedEngine === "desktop") setTranscriptionEngine(savedEngine);
+      else if (!/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) setTranscriptionEngine("desktop");
+    } catch {
+      // Local settings are optional.
+    }
+    setBrowserWhisperReady(browserWhisperSupport().supported);
 
     if ("serviceWorker" in navigator && window.location.protocol === "https:") {
       navigator.serviceWorker.register("/sw.js").catch(() => undefined);
@@ -687,24 +709,81 @@ export default function TagStudio() {
     }
   }
 
+  async function checkLocalTranscriber() {
+    setLocalTranscriberReady(null);
+    try {
+      const response = await fetchLoopback(`${localTranscriberUrl.replace(/\/$/, "")}/health`);
+      if (!response.ok) throw new Error("Local transcriber did not respond.");
+      const data = await response.json() as { ok?: boolean; whisperHalluInstalled?: boolean; whisperTimeSyncInstalled?: boolean };
+      const ready = Boolean(data.ok && data.whisperHalluInstalled && data.whisperTimeSyncInstalled);
+      setLocalTranscriberReady(ready);
+      try {
+        localStorage.setItem("audiotags-local-transcriber-url", localTranscriberUrl);
+        localStorage.setItem("audiotags-local-transcriber-token", localTranscriberToken);
+      } catch {}
+      setMessage(ready ? "Local WhisperHallu + WhisperTimeSync transcriber is ready." : "The helper is running, but upstream Whisper tools are not installed yet. Run the setup script.");
+    } catch {
+      setLocalTranscriberReady(false);
+      setMessage("Local transcriber is offline. Start local-transcriber/start-windows.bat (or the macOS/Linux start script)." );
+    }
+  }
+
   async function transcribeSelected() {
     if (!selected) return;
     setTranscribeLoading(true);
-    setMessage("Uploading this audio to your configured OpenAI project for transcription…");
+    setBrowserWhisperProgress(undefined);
+
+    if (transcriptionEngine === "browser") {
+      const support = browserWhisperSupport();
+      setBrowserWhisperReady(support.supported);
+      if (!support.supported) {
+        setTranscribeLoading(false);
+        setMessage("On-device browser Whisper is not supported here. Choose Desktop helper instead.");
+        return;
+      }
+      setMessage(`Preparing on-device Whisper Base${support.webgpu ? " with WebGPU" : " in WASM/CPU mode"}…`);
+      try {
+        try { localStorage.setItem("audiotags-transcription-engine", "browser"); } catch {}
+        const result = await transcribeInBrowser(selected.file, transcriptionLanguage || "auto", (progress) => {
+          setBrowserWhisperProgress(progress);
+          const pct = typeof progress.fraction === "number" ? ` · ${Math.round(progress.fraction * 100)}%` : "";
+          setMessage(`${progress.stage}${pct}${progress.detail ? ` · ${progress.detail}` : ""}`);
+        });
+        setTranscriptions((current) => ({ ...current, [selected.id]: result }));
+        setMessage(`On-device transcription ready · ${result.model}. Review it before applying to lyrics.`);
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "On-device transcription failed.");
+      } finally {
+        setTranscribeLoading(false);
+      }
+      return;
+    }
+
+    if (!localTranscriberToken.trim()) {
+      setTranscribeLoading(false);
+      setMessage("Paste the pairing token shown by the desktop transcriber first.");
+      return;
+    }
+    setMessage("Transcribing locally with WhisperHallu, then aligning timestamps with WhisperTimeSync…");
     try {
+      try { localStorage.setItem("audiotags-transcription-engine", "desktop"); } catch {}
       const form = new FormData();
       form.append("file", selected.file, selected.file.name);
-      form.append("artist", selected.tags.artist);
-      form.append("title", selected.tags.title);
-      form.append("album", selected.tags.album);
-      if (transcriptionLanguage) form.append("language", transcriptionLanguage);
-      const response = await fetch("/api/transcribe", { method: "POST", body: form });
-      const data = await response.json() as { result?: TranscriptionResult; error?: string };
-      if (!response.ok || !data.result) throw new Error(data.error || "Transcription failed.");
+      form.append("language", transcriptionLanguage || "en");
+      form.append("model", transcriptionModel);
+      const response = await fetchLoopback(`${localTranscriberUrl.replace(/\/$/, "")}/transcribe`, {
+        method: "POST",
+        headers: { "X-AudioTags-Token": localTranscriberToken.trim() },
+        body: form,
+      });
+      const data = await response.json() as { result?: TranscriptionResult; detail?: string; error?: string; timeSyncApplied?: boolean };
+      if (!response.ok || !data.result) throw new Error(data.detail || data.error || "Desktop transcription failed.");
       setTranscriptions((current) => ({ ...current, [selected.id]: data.result! }));
-      setMessage(`Transcription ready${data.result.language ? ` · ${data.result.language}` : ""}. Review it before applying to lyrics.`);
+      setLocalTranscriberReady(true);
+      setMessage(`Desktop transcription ready${data.timeSyncApplied ? " · WhisperTimeSync alignment applied" : " · rough timestamps used"}. Review it before applying to lyrics.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Transcription failed.");
+      setLocalTranscriberReady(false);
+      setMessage(error instanceof Error ? error.message : "Desktop transcription failed.");
     } finally {
       setTranscribeLoading(false);
     }
@@ -729,63 +808,37 @@ export default function TagStudio() {
     if (!selected) return;
     const lyrics = selected.tags.lyrics || selectedTranscription?.text || "";
     setAnalysisLoading(true);
-    setMessage("Analyzing song themes and visual direction…");
+    setMessage("Analyzing song themes locally in your browser…");
     try {
-      const response = await fetch("/api/song/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ artist: selected.tags.artist, title: selected.tags.title, album: selected.tags.album, lyrics }),
-      });
-      const data = await response.json() as { analysis?: SongAnalysis; error?: string };
-      if (!response.ok || !data.analysis) throw new Error(data.error || "Song analysis failed.");
-      setSongAnalyses((current) => ({ ...current, [selected.id]: data.analysis! }));
-      setConceptChoice((current) => ({ ...current, [selected.id]: data.analysis!.concepts[0]?.id || "" }));
-      setMessage(`Art Director created ${data.analysis.concepts.length} original visual concepts.`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Song analysis failed.");
+      const analysis = analyzeSongLocally({ artist: selected.tags.artist, title: selected.tags.title, album: selected.tags.album, lyrics });
+      setSongAnalyses((current) => ({ ...current, [selected.id]: analysis }));
+      setConceptChoice((current) => ({ ...current, [selected.id]: analysis.concepts[0]?.id || "" }));
+      setMessage(`Local Art Director created ${analysis.concepts.length} visual concepts with no paid API.`);
     } finally {
       setAnalysisLoading(false);
     }
   }
 
   async function generateSongArt() {
-    if (!selected || !selectedConcept) return;
+    if (!selected || !selectedConcept || !selectedAnalysis) return;
     setArtGenerating(true);
-    setMessage("Generating an original cover from the selected concept…");
+    setMessage("Rendering a local cover in your browser…");
     try {
-      const response = await fetch("/api/artwork/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: selectedConcept.prompt,
-          artist: selected.tags.artist,
-          title: selected.tags.title,
-          album: selected.tags.album,
-          includeText: includeArtText,
-          direction: artDirection,
-        }),
+      const cover = await renderLocalConceptCover({
+        artist: selected.tags.artist,
+        title: selected.tags.title,
+        palette: selectedAnalysis.palette,
+        concept: selectedConcept,
+        includeText: includeArtText,
+        direction: artDirection,
       });
-      const data = await response.json() as { image?: { b64: string; mimeType: string; label?: string }; error?: string };
-      if (!response.ok || !data.image?.b64) throw new Error(data.error || "Artwork generation failed.");
-      const buffer = base64ToArrayBuffer(data.image.b64);
-      const mimeType = data.image.mimeType || "image/jpeg";
-      const cover: CoverAsset = {
-        data: buffer,
-        url: URL.createObjectURL(new Blob([buffer], { type: mimeType })),
-        mimeType,
-        source: "generated",
-        label: data.image.label || `AI concept: ${selectedConcept.title}`,
-        width: 1024,
-        height: 1024,
-        bytes: buffer.byteLength,
-      };
       setGeneratedArt((current) => {
         revokeCover(current[selected.id]);
         return { ...current, [selected.id]: cover };
       });
-      setMessage("Original artwork generated. Review it before using it as the MP3 cover.");
+      setMessage("Local 1024×1024 artwork rendered. Review it before using it as the MP3 cover.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Artwork generation failed.");
+      setMessage(error instanceof Error ? error.message : "Local artwork rendering failed.");
     } finally {
       setArtGenerating(false);
     }
@@ -856,7 +909,7 @@ export default function TagStudio() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-semibold tracking-tight">fdgrc Tag Studio</h1>
-                <span className="version-badge">V1.6</span>
+                <span className="version-badge">V1.6.2</span>
               </div>
               <p className="muted-soft text-xs">Smart MP3 metadata + lyrics + cover art editor</p>
             </div>
@@ -1104,26 +1157,41 @@ export default function TagStudio() {
                 <div className="ai-transcribe-panel sm:col-span-2 rounded-2xl border p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <div className="flex items-center gap-2 text-sm font-semibold"><span className="ai-badge">AI</span> Audio → Lyrics & Captions</div>
-                      <p className="muted-soft mt-1 text-xs">Cloud transcription sends this audio file through your Worker to OpenAI. Nothing is uploaded until you press Transcribe.</p>
+                      <div className="flex items-center gap-2 text-sm font-semibold"><span className="ai-badge">LOCAL</span> Audio → Lyrics & Captions</div>
+                      <p className="muted-soft mt-1 text-xs">No paid API. Mobile/PWA can run Whisper Base directly on this device; desktop can optionally use WhisperHallu + WhisperTimeSync.</p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <select className="input input-compact w-[118px]" value={transcriptionLanguage} onChange={(event) => setTranscriptionLanguage(event.target.value)} title="Optional input language">
-                        <option value="">Auto language</option>
-                        <option value="en">English</option>
-                        <option value="es">Spanish</option>
-                        <option value="fr">French</option>
-                        <option value="de">German</option>
-                        <option value="it">Italian</option>
-                        <option value="pt">Portuguese</option>
-                        <option value="ja">Japanese</option>
-                        <option value="ko">Korean</option>
-                        <option value="zh">Chinese</option>
-                        <option value="tl">Tagalog</option>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select className="input input-compact w-[146px]" value={transcriptionEngine} onChange={(event) => setTranscriptionEngine(event.target.value as TranscriptionEngine)} title="Transcription engine">
+                        <option value="browser">On this device</option><option value="desktop">Desktop helper</option>
                       </select>
+                      <select className="input input-compact w-[118px]" value={transcriptionLanguage} onChange={(event) => setTranscriptionLanguage(event.target.value)} title="Input language">
+                        <option value="auto">Auto detect</option><option value="en">English</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option><option value="tl">Tagalog</option>
+                      </select>
+                      {transcriptionEngine === "desktop" && (
+                        <select className="input input-compact w-[108px]" value={transcriptionModel} onChange={(event) => setTranscriptionModel(event.target.value)} title="Desktop Whisper model">
+                          <option value="tiny">Tiny</option><option value="base">Base</option><option value="small">Small</option><option value="medium">Medium</option><option value="large-v2">Large v2</option>
+                        </select>
+                      )}
                       <button type="button" className="btn btn-smart text-xs" disabled={transcribeLoading} onClick={() => void transcribeSelected()}>{transcribeLoading ? "Transcribing…" : "Transcribe audio"}</button>
                     </div>
                   </div>
+                  {transcriptionEngine === "browser" ? (
+                    <div className="mt-3 rounded-xl border border-dashed p-3 text-xs">
+                      <div className="font-semibold">On-device Whisper Base · multilingual</div>
+                      <div className="muted-soft mt-1">Status: {browserWhisperReady === false ? "Not supported in this browser" : browserWhisperSupport().webgpu ? "Ready · WebGPU available" : "Ready · WASM/CPU fallback"}. The first run downloads the model once and the browser caches it when possible.</div>
+                      {browserWhisperProgress && <div className="muted-soft mt-1">{browserWhisperProgress.stage}{typeof browserWhisperProgress.fraction === "number" ? ` · ${Math.round(browserWhisperProgress.fraction * 100)}%` : ""}{browserWhisperProgress.detail ? ` · ${browserWhisperProgress.detail}` : ""}</div>}
+                      <div className="muted-soft mt-1">Adapted from the SynthIQ Auto Lyrics mobile workflow: 16 kHz mono prep, vocal-focused normalization, timed chunks, cleanup, quality scoring, and weak-result retry. <a className="text-link" href="/MOBILE-WHISPER.md" target="_blank" rel="noreferrer">Mobile guide</a></div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                        <input className="input input-compact" value={localTranscriberUrl} onChange={(event) => setLocalTranscriberUrl(event.target.value)} placeholder="http://127.0.0.1:8765" aria-label="Local transcriber URL" />
+                        <input className="input input-compact" type="password" value={localTranscriberToken} onChange={(event) => setLocalTranscriberToken(event.target.value)} placeholder="Pairing token from desktop helper" aria-label="Local transcriber pairing token" />
+                        <button type="button" className="btn btn-ghost text-xs" onClick={() => void checkLocalTranscriber()}>Check connection</button>
+                      </div>
+                      <div className="muted-soft mt-2 text-[11px]">Desktop helper: {localTranscriberReady === true ? "Ready ✓" : localTranscriberReady === false ? "Offline / setup needed" : "Not checked"}. <a className="text-link" href="/LOCAL-TRANSCRIBER.md" target="_blank" rel="noreferrer">Desktop setup guide</a></div>
+                    </>
+                  )}
                   {selectedTranscription && (
                     <div className="mt-3">
                       <div className="mb-2 flex flex-wrap gap-2 text-[11px]">
@@ -1149,7 +1217,7 @@ export default function TagStudio() {
                     <button type="button" className="text-link" disabled={lyricsLoading || !selected.tags.title || !selected.tags.artist} onClick={() => void findLyrics()}>{lyricsLoading ? "Searching…" : "Find lyrics"}</button>
                   </span>
                   <textarea className="input min-h-36 resize-y" value={selected.tags.lyrics} onChange={(event) => updateTag("lyrics", event.target.value)} />
-                  <span className="muted-soft mt-1 block text-[11px]">Lyrics lookup uses LRCLIB. AI transcription remains separate until you choose “Use as lyrics.”</span>
+                  <span className="muted-soft mt-1 block text-[11px]">Lyrics lookup uses LRCLIB. Local Whisper transcription remains separate until you choose “Use as lyrics.”</span>
                 </label>
               </div>
 
@@ -1239,8 +1307,8 @@ export default function TagStudio() {
               <div className="art-director rounded-2xl border p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="flex items-center gap-2 text-sm font-semibold"><span className="ai-badge">AI</span> Art Director</div>
-                    <p className="muted-soft mt-1 text-[11px]">Uses artist/title plus approved lyrics or transcript to create original concepts. Lyrics are summarized before image generation.</p>
+                    <div className="flex items-center gap-2 text-sm font-semibold"><span className="ai-badge">LOCAL</span> Art Director</div>
+                    <p className="muted-soft mt-1 text-[11px]">Uses artist/title plus approved lyrics or transcript to suggest visual themes locally. No paid text or image API is used.</p>
                   </div>
                   <button className="btn btn-smart px-3 py-2 text-xs" disabled={analysisLoading} onClick={() => void analyzeSong()}>{analysisLoading ? "Analyzing…" : selectedAnalysis ? "Re-analyze" : "Analyze song"}</button>
                 </div>
@@ -1274,22 +1342,22 @@ export default function TagStudio() {
                     </label>
                     <label className="muted mt-3 flex cursor-pointer items-center gap-2 text-xs">
                       <input type="checkbox" checked={includeArtText} onChange={(event) => setIncludeArtText(event.target.checked)} />
-                      Ask generated art to include title + artist typography
+                      Include title + artist typography in the locally rendered cover
                     </label>
-                    <button className="btn btn-primary mt-3 w-full" disabled={!selectedConcept || artGenerating} onClick={() => void generateSongArt()}>{artGenerating ? "Generating cover…" : `Generate “${selectedConcept?.title || "concept"}”`}</button>
+                    <button className="btn btn-primary mt-3 w-full" disabled={!selectedConcept || artGenerating} onClick={() => void generateSongArt()}>{artGenerating ? "Rendering cover…" : `Render “${selectedConcept?.title || "concept"}” locally`}</button>
                   </div>
                 )}
 
                 {selectedGeneratedArt && (
                   <div className="mt-4">
                     <div className="generated-art relative aspect-square overflow-hidden rounded-2xl border">
-                      <Image src={selectedGeneratedArt.url} alt="AI-generated cover preview" fill sizes="360px" className="object-cover" unoptimized />
+                      <Image src={selectedGeneratedArt.url} alt="Locally generated cover preview" fill sizes="360px" className="object-cover" unoptimized />
                     </div>
                     <div className="mt-2 flex gap-2">
                       <button className="btn btn-smart flex-1 text-xs" onClick={useGeneratedArtAsCover}>Use as cover</button>
                       <button className="btn btn-ghost text-xs" disabled={artGenerating} onClick={() => void generateSongArt()}>Regenerate</button>
                     </div>
-                    <p className="muted-soft mt-2 text-[11px]">Generated art remains a preview until you choose Use as cover.</p>
+                    <p className="muted-soft mt-2 text-[11px]">Locally rendered art remains a preview until you choose Use as cover.</p>
                   </div>
                 )}
               </div>
@@ -1299,7 +1367,7 @@ export default function TagStudio() {
       </div>
 
       {message && <button className="toast fixed bottom-5 left-1/2 z-50 max-w-[90vw] -translate-x-1/2 rounded-xl border px-4 py-3 text-left text-sm shadow-2xl" onClick={() => setMessage(undefined)}>{message}</button>}
-      <footer className="muted-soft mx-auto max-w-[1720px] px-5 pb-8 pt-2 text-center text-xs">Developed by Ferdinand Degracia — AI Assisted Engineering · Metadata: MusicBrainz · Lyrics: LRCLIB + optional OpenAI transcription · Original art: optional OpenAI generation</footer>
+      <footer className="muted-soft mx-auto max-w-[1720px] px-5 pb-8 pt-2 text-center text-xs">Developed by Ferdinand Degracia — AI Assisted Engineering · Metadata: MusicBrainz · Lyrics: LRCLIB + on-device Whisper Base + desktop WhisperHallu/WhisperTimeSync · Art concepts + cover rendering: local/browser</footer>
     </main>
   );
 }

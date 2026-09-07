@@ -1,70 +1,49 @@
-# Cloudflare Workers deployment — V1.6
+# Cloudflare Workers deployment — V1.6.2
 
-This project targets **Cloudflare Workers + vinext** and keeps normal Next.js scripts for local development.
+V1.6.2 keeps **Cloudflare Workers + vinext**, but paid AI APIs are no longer part of the hosted Worker.
 
-> The Worker name remains `audiotags` in `wrangler.jsonc`. If your Worker uses another name, make those names match.
-
-> The compatibility date remains pinned to `2026-09-06` to avoid the future-date deployment rejection encountered earlier.
-
-## Install and build
-
-```bash
-npm install
-npm run check:vinext
-npm run build:vinext
-```
-
-## Workers Builds
-
-Keep the existing settings:
+## Build settings
 
 - **Build command:** `npm run build:vinext`
 - **Deploy command:** `npm run deploy:built`
 - **Root directory:** `/`
 
-## Environment variables
+The Worker name remains `audiotags` in `wrangler.jsonc`. If your Cloudflare Worker has a different name, make them match.
 
-Add the public service identification strings:
+## No OpenAI secret
 
-```env
-MUSICBRAINZ_USER_AGENT="fdgrc-tag-studio/1.6 (you@example.com)"
-LRCLIB_USER_AGENT="fdgrc-tag-studio/1.6 (you@example.com)"
-```
+You do **not** need `OPENAI_API_KEY` or any OpenAI model variables.
 
-For V1.6 AI features, add:
+The only optional environment variable is:
 
 ```env
-OPENAI_TRANSCRIBE_MODEL="gpt-transcribe"
-OPENAI_TEXT_MODEL="gpt-5.6-luna"
-OPENAI_IMAGE_MODEL="gpt-image-2"
+MUSICBRAINZ_USER_AGENT="AudioTags/1.6.2 (you@example.com)"
 ```
 
-And add **`OPENAI_API_KEY` as a secret** in Cloudflare. Do not place it in client-side code or any `NEXT_PUBLIC_*` variable.
-
-For local Wrangler development you can copy `.dev.vars.example` to `.dev.vars` and put your development key there. Do not commit `.dev.vars`.
-
-## Useful routes
-
-- `/` — Tag Studio V1.6
-- `/api/health`
-- `/api/artwork/search`
-- `/api/metadata/search`
-- `/api/lyrics/search`
-- `POST /api/transcribe` — multipart audio transcription
-- `POST /api/song/analyze` — lyrics-aware art direction
-- `POST /api/artwork/generate` — original cover generation
-
-## V1.6 request flow
+## Request flow
 
 ```text
-Browser
-  ├─ MP3 parsing / playback / ID3 writing / ZIP export (local)
-  ├─ Transcribe audio button
-  │      └─ selected audio ──────────────► Cloudflare Worker ─► OpenAI transcription
-  ├─ Analyze song button
-  │      └─ metadata + approved lyrics ─► Cloudflare Worker ─► OpenAI text model
-  └─ Generate cover button
-         └─ derived art concept ─────────► Cloudflare Worker ─► OpenAI image generation
+Cloudflare-hosted browser app
+  ├─ MP3 parsing / playback / ID3 / ZIP          → browser only
+  ├─ metadata and official covers                → MusicBrainz / Cover Art Archive
+  ├─ lyrics lookup                               → LRCLIB
+  ├─ lyrics-aware theme/art concepts             → browser only
+  ├─ procedural 1024×1024 cover rendering        → browser only
+  └─ Transcribe audio
+       └─ http://127.0.0.1:8765 on user's PC
+            ├─ WhisperHallu
+            └─ WhisperTimeSync
 ```
 
-The user must explicitly trigger each OpenAI operation.
+Modern browsers can ask the user for permission before an HTTPS site accesses a loopback/local service. Allow that permission for AudioTags when prompted; the local helper is bound only to `127.0.0.1` and additionally requires its pairing token.
+
+## Useful hosted routes
+
+- `/`
+- `/api/health`
+- `/api/artwork/search`
+- `/api/artwork/image`
+- `/api/metadata/search`
+- `/api/lyrics/search`
+
+The legacy `/api/transcribe`, `/api/song/analyze`, and `/api/artwork/generate` paths remain only as disabled `410 Gone` stubs so a V1.6 changes-only overlay cannot accidentally leave paid endpoints active.
