@@ -1,10 +1,10 @@
-# AudioTags V1.6.2 build-fix patch
+# V1.6.2.2 changes-only patch
 
-Copy these files into the repository, preserving the folders:
+Overlay this ZIP on V1.6.2 Build Fix.
 
-- `lib/audio/songArtLocal.ts`
-- `lib/audio/localArt.ts`
-
-This directly fixes Cloudflare's `UNLOADABLE_DEPENDENCY` errors from `components/TagStudio.tsx`.
-
-No existing file needs to be deleted or edited. After committing/pushing these files, rerun the existing Cloudflare deployment.
+Changed files:
+- components/TagStudio.tsx
+- public/sw.js
+- app/api/health/route.ts
+- package.json
+- BUILD-FIX-V1.6.2.2.md

@@ -250,14 +250,22 @@ export default function TagStudio() {
       const savedUrl = localStorage.getItem("audiotags-local-transcriber-url");
       const savedToken = localStorage.getItem("audiotags-local-transcriber-token");
       const savedEngine = localStorage.getItem("audiotags-transcription-engine");
+      const support = browserWhisperSupport();
       if (savedUrl) setLocalTranscriberUrl(savedUrl);
       if (savedToken) setLocalTranscriberToken(savedToken);
-      if (savedEngine === "browser" || savedEngine === "desktop") setTranscriptionEngine(savedEngine);
-      else if (!/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) setTranscriptionEngine("desktop");
+
+      // Prefer no-pairing on-device Whisper everywhere it is supported.
+      // Preserve Desktop helper only when the user has actually paired it.
+      if (savedEngine === "desktop" && savedToken) setTranscriptionEngine("desktop");
+      else if (savedEngine === "browser") setTranscriptionEngine("browser");
+      else if (support.supported) setTranscriptionEngine("browser");
+      else setTranscriptionEngine("desktop");
+      setBrowserWhisperReady(support.supported);
     } catch {
-      // Local settings are optional.
+      const support = browserWhisperSupport();
+      setBrowserWhisperReady(support.supported);
+      setTranscriptionEngine(support.supported ? "browser" : "desktop");
     }
-    setBrowserWhisperReady(browserWhisperSupport().supported);
 
     if ("serviceWorker" in navigator && window.location.protocol === "https:") {
       navigator.serviceWorker.register("/sw.js").catch(() => undefined);
@@ -1161,8 +1169,8 @@ export default function TagStudio() {
                       <p className="muted-soft mt-1 text-xs">No paid API. Mobile/PWA can run Whisper Base directly on this device; desktop can optionally use WhisperHallu + WhisperTimeSync.</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <select className="input input-compact w-[146px]" value={transcriptionEngine} onChange={(event) => setTranscriptionEngine(event.target.value as TranscriptionEngine)} title="Transcription engine">
-                        <option value="browser">On this device</option><option value="desktop">Desktop helper</option>
+                      <select className="input input-compact w-[210px]" value={transcriptionEngine} onChange={(event) => setTranscriptionEngine(event.target.value as TranscriptionEngine)} title="Transcription engine">
+                        <option value="browser">On this device — no pairing</option><option value="desktop">Desktop helper — paired</option>
                       </select>
                       <select className="input input-compact w-[118px]" value={transcriptionLanguage} onChange={(event) => setTranscriptionLanguage(event.target.value)} title="Input language">
                         <option value="auto">Auto detect</option><option value="en">English</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="it">Italian</option><option value="pt">Portuguese</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option><option value="tl">Tagalog</option>
@@ -1189,7 +1197,7 @@ export default function TagStudio() {
                         <input className="input input-compact" type="password" value={localTranscriberToken} onChange={(event) => setLocalTranscriberToken(event.target.value)} placeholder="Pairing token from desktop helper" aria-label="Local transcriber pairing token" />
                         <button type="button" className="btn btn-ghost text-xs" onClick={() => void checkLocalTranscriber()}>Check connection</button>
                       </div>
-                      <div className="muted-soft mt-2 text-[11px]">Desktop helper: {localTranscriberReady === true ? "Ready ✓" : localTranscriberReady === false ? "Offline / setup needed" : "Not checked"}. <a className="text-link" href="/LOCAL-TRANSCRIBER.md" target="_blank" rel="noreferrer">Desktop setup guide</a></div>
+                      <div className="muted-soft mt-2 text-[11px]">Pairing token is required only for the optional Desktop helper. Desktop helper: {localTranscriberReady === true ? "Ready ✓" : localTranscriberReady === false ? "Offline / setup needed" : "Not checked"}. <a className="text-link" href="/LOCAL-TRANSCRIBER.md" target="_blank" rel="noreferrer">Desktop setup guide</a></div>
                     </>
                   )}
                   {selectedTranscription && (
