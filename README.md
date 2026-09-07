@@ -1,4 +1,4 @@
-# fdgrc Tag Studio V1.6.2 — No-Payment Edition
+# fdgrc Tag Studio V1.6.2.4 — No-Payment Edition
 
 Privacy-first MP3 metadata, cover-art, Smart Fix, lyrics/caption, batch, and local transcription editor built with Next.js 16 for **Cloudflare Workers using vinext**.
 
@@ -20,7 +20,7 @@ The hosted Cloudflare Worker never receives the MP3 for transcription. On mobile
 
 ## Audio → Lyrics & Captions
 
-**Mobile/PWA:** import a track, choose **On this device**, and press **Transcribe audio**. The first run downloads Whisper Base and later runs reuse the browser cache when available.
+**Mobile/PWA:** import a track, choose **On this device**, and press **Transcribe audio**. The first run downloads Whisper Base through AudioTags' same-origin Cloudflare relay and later runs reuse the browser cache when available. The phone no longer needs direct access to jsDelivr, UNPKG, or Hugging Face.
 
 **Desktop helper (optional):** install/start `LOCAL-TRANSCRIBER.md`, choose **Desktop helper**, then pair it with AudioTags.
 
@@ -41,6 +41,10 @@ Root directory: /
 ```
 
 No AI secret is needed in Cloudflare.
+
+### V1.6.2.4 mobile download relay
+
+To avoid mobile private-DNS/ad-blocker/CDN failures, the browser now requests the Transformers.js runtime, ONNX WASM files, and allowed Whisper Base model files from the **same AudioTags origin**. Cloudflare relays those public files server-side. This remains free and the MP3 itself is never uploaded to Cloudflare for transcription.
 
 Optional MusicBrainz identification:
 

@@ -39,3 +39,8 @@ The web edition uses Transformers.js + ONNX Runtime in a Web Worker because an A
 ## Desktop
 
 The original V1.6.1 WhisperHallu + WhisperTimeSync local helper remains available as the `Desktop helper` engine and can be preferred for higher-end desktop hardware.
+
+
+## V1.6.2.4 network reliability fix
+
+The phone no longer imports Transformers.js or downloads Whisper model files directly from third-party domains. AudioTags uses same-origin endpoints under `/api/whisper-runtime/` and `/api/whisper-model/` which relay only the allow-listed public runtime/model files. This avoids many mobile private-DNS, tracking protection, ad-blocker, and cross-origin failures while keeping transcription on-device.
