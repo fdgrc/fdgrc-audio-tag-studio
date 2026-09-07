@@ -18,7 +18,7 @@ export type CoverAsset = {
   url: string;
   data?: ArrayBuffer;
   mimeType: string;
-  source: "embedded" | "upload" | "suggestion" | "optimized";
+  source: "embedded" | "upload" | "suggestion" | "optimized" | "generated";
   label?: string;
   width?: number;
   height?: number;
@@ -73,4 +73,36 @@ export type LyricsLookupResult = {
   plainLyrics?: string;
   syncedLyrics?: string;
   source: "LRCLIB";
+};
+
+
+export type TranscriptSegment = {
+  start: number;
+  end: number;
+  text: string;
+};
+
+export type TranscriptionResult = {
+  text: string;
+  language?: string;
+  duration?: number;
+  segments: TranscriptSegment[];
+  model: string;
+};
+
+export type ArtConcept = {
+  id: string;
+  title: string;
+  description: string;
+  prompt: string;
+};
+
+export type SongAnalysis = {
+  summary: string;
+  mood: string;
+  energy: "low" | "medium" | "high" | "dynamic";
+  themes: string[];
+  imagery: string[];
+  palette: string[];
+  concepts: ArtConcept[];
 };

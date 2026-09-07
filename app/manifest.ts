@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "fdgrc Tag Studio",
     short_name: "Tag Studio",
-    description: "Privacy-first MP3 metadata, cover art, Smart Fix, and batch editor.",
+    description: "Privacy-first MP3 metadata, AI lyrics transcription, captions, Smart Fix, and cover art editor.",
     start_url: "/",
     display: "standalone",
     background_color: "#080a0f",

@@ -1,95 +1,70 @@
-# Cloudflare Workers deployment — V1.5
+# Cloudflare Workers deployment — V1.6
 
 This project targets **Cloudflare Workers + vinext** and keeps normal Next.js scripts for local development.
 
-> The Worker name is currently `audiotags` in `wrangler.jsonc`. If your Cloudflare Worker has a different name, change that field to exactly match it.
+> The Worker name remains `audiotags` in `wrangler.jsonc`. If your Worker uses another name, make those names match.
 
-> The compatibility date remains pinned to `2026-09-06` to avoid the future-date rejection encountered in the earlier deployment. Update it later only to a date Cloudflare already accepts.
+> The compatibility date remains pinned to `2026-09-06` to avoid the future-date deployment rejection encountered earlier.
 
-## Install
+## Install and build
 
 ```bash
 npm install
-```
-
-## Local development
-
-```bash
-npm run dev
-```
-
-or through vinext:
-
-```bash
-npm run dev:vinext
-```
-
-## Configure lookup identification
-
-Copy `.env.example` to `.env.local` for local Next.js development. For production, add these Worker environment variables in Cloudflare:
-
-```env
-MUSICBRAINZ_USER_AGENT="fdgrc-tag-studio/1.5 (you@example.com)"
-LRCLIB_USER_AGENT="fdgrc-tag-studio/1.5 (you@example.com)"
-```
-
-These are not credentials. They identify the application when it calls public metadata/lyrics services.
-
-## Compatibility + build
-
-```bash
 npm run check:vinext
 npm run build:vinext
 ```
 
-## Preview Workers runtime
+## Workers Builds
 
-```bash
-npm run preview:worker
-```
-
-Useful checks:
-
-- `/` — Tag Studio V1.5
-- `/api/health` — API health
-- `/api/artwork/search?artist=Daft%20Punk&album=Discovery&title=One%20More%20Time`
-- `/api/metadata/search?artist=Daft%20Punk&title=One%20More%20Time&album=Discovery&duration=320`
-- `/api/lyrics/search?artist=Daft%20Punk&title=One%20More%20Time&album=Discovery&duration=320`
-
-## Deploy locally
-
-```bash
-npx wrangler login
-npm run deploy
-```
-
-## Workers Builds / Git repository
-
-Recommended Cloudflare settings:
+Keep the existing settings:
 
 - **Build command:** `npm run build:vinext`
 - **Deploy command:** `npm run deploy:built`
 - **Root directory:** `/`
 
-Add the two User-Agent variables above to your Worker environment settings.
+## Environment variables
 
-## Architecture
+Add the public service identification strings:
+
+```env
+MUSICBRAINZ_USER_AGENT="fdgrc-tag-studio/1.6 (you@example.com)"
+LRCLIB_USER_AGENT="fdgrc-tag-studio/1.6 (you@example.com)"
+```
+
+For V1.6 AI features, add:
+
+```env
+OPENAI_TRANSCRIBE_MODEL="gpt-transcribe"
+OPENAI_TEXT_MODEL="gpt-5.6-luna"
+OPENAI_IMAGE_MODEL="gpt-image-2"
+```
+
+And add **`OPENAI_API_KEY` as a secret** in Cloudflare. Do not place it in client-side code or any `NEXT_PUBLIC_*` variable.
+
+For local Wrangler development you can copy `.dev.vars.example` to `.dev.vars` and put your development key there. Do not commit `.dev.vars`.
+
+## Useful routes
+
+- `/` — Tag Studio V1.6
+- `/api/health`
+- `/api/artwork/search`
+- `/api/metadata/search`
+- `/api/lyrics/search`
+- `POST /api/transcribe` — multipart audio transcription
+- `POST /api/song/analyze` — lyrics-aware art direction
+- `POST /api/artwork/generate` — original cover generation
+
+## V1.6 request flow
 
 ```text
 Browser
-  ├─ MP3 parse + playback
-  ├─ ID3 edit/write
-  ├─ filename cleanup
-  ├─ duplicate + quality analysis
-  ├─ cover crop/resize/compression
-  ├─ batch editing
-  └─ ZIP export
-        │
-        └─ lookup text/duration only
-             ▼
-Cloudflare Worker
-  ├─ /api/metadata/search ── MusicBrainz
-  ├─ /api/artwork/search  ── MusicBrainz + Cover Art Archive
-  ├─ /api/artwork/image   ── validated image proxy
-  └─ /api/lyrics/search   ── LRCLIB
+  ├─ MP3 parsing / playback / ID3 writing / ZIP export (local)
+  ├─ Transcribe audio button
+  │      └─ selected audio ──────────────► Cloudflare Worker ─► OpenAI transcription
+  ├─ Analyze song button
+  │      └─ metadata + approved lyrics ─► Cloudflare Worker ─► OpenAI text model
+  └─ Generate cover button
+         └─ derived art concept ─────────► Cloudflare Worker ─► OpenAI image generation
 ```
+
+The user must explicitly trigger each OpenAI operation.

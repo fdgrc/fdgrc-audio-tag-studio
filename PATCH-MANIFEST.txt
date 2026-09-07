@@ -1,0 +1,22 @@
+V1.6 changes-only patch
+Base: V1.5
+
+Changed/new files:
+- .dev.vars.example
+- .env.example
+- CHANGELOG-V1.6.md
+- CLOUDFLARE.md
+- README.md
+- app/api/artwork/generate/route.ts
+- app/api/health/route.ts
+- app/api/song/analyze/route.ts
+- app/api/transcribe/route.ts
+- app/globals.css
+- app/manifest.ts
+- components/TagStudio.tsx
+- lib/audio/captions.ts
+- lib/audio/writeId3.ts
+- lib/server/openai.ts
+- package.json
+- public/sw.js
+- types/audio.ts

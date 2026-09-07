@@ -1,5 +1,6 @@
 import { ID3Writer } from "browser-id3-writer";
-import type { CoverAsset, EditableTags, TrackItem } from "@/types/audio";
+import type { CoverAsset, EditableTags, TrackItem, TranscriptSegment } from "@/types/audio";
+import { segmentsToSyncedLyrics } from "@/lib/audio/captions";
 import { safeFileName } from "@/lib/format";
 
 function splitList(value: string) {
@@ -14,7 +15,22 @@ async function coverBuffer(cover?: CoverAsset): Promise<ArrayBuffer | undefined>
   return response.arrayBuffer();
 }
 
-export async function writeMp3(file: File, tags: EditableTags, cover?: CoverAsset) {
+function id3Language(language?: string) {
+  const map: Record<string, string> = {
+    en: "eng", es: "spa", fr: "fra", de: "deu", it: "ita", pt: "por",
+    ja: "jpn", ko: "kor", zh: "zho", tl: "tgl", id: "ind", ms: "msa",
+  };
+  const key = language?.trim().toLowerCase().split(/[-_]/)[0] || "";
+  return map[key] || "eng";
+}
+
+export async function writeMp3(
+  file: File,
+  tags: EditableTags,
+  cover?: CoverAsset,
+  timedLyrics?: TranscriptSegment[],
+  lyricsLanguage?: string,
+) {
   const source = await file.arrayBuffer();
   const writer = new ID3Writer(source);
 
@@ -40,8 +56,20 @@ export async function writeMp3(file: File, tags: EditableTags, cover?: CoverAsse
     writer.setFrame("USLT", {
       description: "",
       lyrics: tags.lyrics,
-      language: "eng",
+      language: id3Language(lyricsLanguage),
     });
+  }
+  if (timedLyrics?.length) {
+    const synced = segmentsToSyncedLyrics(timedLyrics);
+    if (synced.length) {
+      writer.setFrame("SYLT", {
+        type: 1,
+        text: synced,
+        timestampFormat: 2,
+        language: id3Language(lyricsLanguage),
+        description: "AI transcription",
+      });
+    }
   }
 
   const artwork = await coverBuffer(cover);

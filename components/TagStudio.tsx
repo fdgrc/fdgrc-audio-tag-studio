@@ -15,6 +15,7 @@ import { readTrack } from "@/lib/audio/readMetadata";
 import { suggestedOutputName, writeMp3 } from "@/lib/audio/writeId3";
 import { cleanEditableTags, guessTagsFromFileName } from "@/lib/audio/guessTags";
 import { cloneCover, optimizeCover } from "@/lib/audio/coverTools";
+import { segmentsToLrc, segmentsToSrt, segmentsToVtt } from "@/lib/audio/captions";
 import {
   albumKey,
   albumLabel,
@@ -30,7 +31,9 @@ import type {
   EditableTags,
   LyricsLookupResult,
   MetadataSuggestion,
+  SongAnalysis,
   TrackItem,
+  TranscriptionResult,
 } from "@/types/audio";
 
 const fields: Array<{ key: keyof EditableTags; label: string; placeholder?: string }> = [
@@ -83,6 +86,17 @@ function downloadBlob(blob: Blob, name: string) {
   anchor.click();
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function downloadText(text: string, name: string, type = "text/plain;charset=utf-8") {
+  downloadBlob(new Blob([text], { type }), name);
+}
+
+function base64ToArrayBuffer(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
 }
 
 function delay(ms: number) {
@@ -150,6 +164,16 @@ export default function TagStudio() {
   const [smartLoadingIds, setSmartLoadingIds] = useState<string[]>([]);
   const [batchScanning, setBatchScanning] = useState(false);
   const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [transcriptions, setTranscriptions] = useState<Record<string, TranscriptionResult>>({});
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState("");
+  const [transcribeLoading, setTranscribeLoading] = useState(false);
+  const [songAnalyses, setSongAnalyses] = useState<Record<string, SongAnalysis>>({});
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [conceptChoice, setConceptChoice] = useState<Record<string, string>>({});
+  const [artDirection, setArtDirection] = useState("");
+  const [includeArtText, setIncludeArtText] = useState(false);
+  const [artGenerating, setArtGenerating] = useState(false);
+  const [generatedArt, setGeneratedArt] = useState<Record<string, CoverAsset>>({});
   const [coverSize, setCoverSize] = useState(1000);
   const [isOptimizingCover, setIsOptimizingCover] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent>();
@@ -158,6 +182,7 @@ export default function TagStudio() {
   const folderInput = useRef<HTMLInputElement>(null);
   const coverInput = useRef<HTMLInputElement>(null);
   const tracksRef = useRef<TrackItem[]>([]);
+  const generatedArtRef = useRef<Record<string, CoverAsset>>({});
   const lastMbRequestAt = useRef(0);
 
   const selected = useMemo(() => tracks.find((track) => track.id === selectedId), [tracks, selectedId]);
@@ -197,6 +222,15 @@ export default function TagStudio() {
     return options.find((item) => item.id === choiceId) || options[0];
   }, [selected, smartSuggestions, smartChoice]);
 
+  const selectedTranscription = selected ? transcriptions[selected.id] : undefined;
+  const selectedAnalysis = selected ? songAnalyses[selected.id] : undefined;
+  const selectedConcept = useMemo(() => {
+    if (!selected || !selectedAnalysis) return undefined;
+    const id = conceptChoice[selected.id];
+    return selectedAnalysis.concepts.find((concept) => concept.id === id) || selectedAnalysis.concepts[0];
+  }, [selected, selectedAnalysis, conceptChoice]);
+  const selectedGeneratedArt = selected ? generatedArt[selected.id] : undefined;
+
   useEffect(() => {
     const current = document.documentElement.dataset.theme;
     if (current === "light" || current === "dark" || current === "system") setTheme(current);
@@ -220,7 +254,14 @@ export default function TagStudio() {
   }, [tracks]);
 
   useEffect(() => {
-    return () => tracksRef.current.forEach(revokeTrackUrls);
+    generatedArtRef.current = generatedArt;
+  }, [generatedArt]);
+
+  useEffect(() => {
+    return () => {
+      tracksRef.current.forEach(revokeTrackUrls);
+      for (const cover of Object.values(generatedArtRef.current) as CoverAsset[]) revokeCover(cover);
+    };
   }, []);
 
   useEffect(() => {
@@ -313,6 +354,14 @@ export default function TagStudio() {
       delete next[id];
       return next;
     });
+    setTranscriptions((current) => { const next = { ...current }; delete next[id]; return next; });
+    setSongAnalyses((current) => { const next = { ...current }; delete next[id]; return next; });
+    setGeneratedArt((current) => {
+      const next = { ...current };
+      revokeCover(next[id]);
+      delete next[id];
+      return next;
+    });
     if (selectedId === id) setSelectedId(remaining[0]?.id);
   }
 
@@ -321,8 +370,13 @@ export default function TagStudio() {
     setTracks([]);
     setSelectedId(undefined);
     setCheckedIds([]);
+    for (const cover of Object.values(generatedArt) as CoverAsset[]) revokeCover(cover);
     setArtwork([]);
     setSmartSuggestions({});
+    setTranscriptions({});
+    setSongAnalyses({});
+    setGeneratedArt({});
+    setConceptChoice({});
     setMessage(undefined);
   }
 
@@ -633,12 +687,127 @@ export default function TagStudio() {
     }
   }
 
+  async function transcribeSelected() {
+    if (!selected) return;
+    setTranscribeLoading(true);
+    setMessage("Uploading this audio to your configured OpenAI project for transcription…");
+    try {
+      const form = new FormData();
+      form.append("file", selected.file, selected.file.name);
+      form.append("artist", selected.tags.artist);
+      form.append("title", selected.tags.title);
+      form.append("album", selected.tags.album);
+      if (transcriptionLanguage) form.append("language", transcriptionLanguage);
+      const response = await fetch("/api/transcribe", { method: "POST", body: form });
+      const data = await response.json() as { result?: TranscriptionResult; error?: string };
+      if (!response.ok || !data.result) throw new Error(data.error || "Transcription failed.");
+      setTranscriptions((current) => ({ ...current, [selected.id]: data.result! }));
+      setMessage(`Transcription ready${data.result.language ? ` · ${data.result.language}` : ""}. Review it before applying to lyrics.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Transcription failed.");
+    } finally {
+      setTranscribeLoading(false);
+    }
+  }
+
+  function useTranscriptAsLyrics() {
+    if (!selected || !selectedTranscription?.text) return;
+    updateTag("lyrics", selectedTranscription.text);
+    setMessage("Transcription copied into Lyrics. Saving the MP3 will also embed timed SYLT lyrics when timestamps are available.");
+  }
+
+  function downloadTranscript(format: "txt" | "lrc" | "srt" | "vtt") {
+    if (!selected || !selectedTranscription) return;
+    const stem = suggestedOutputName(selected).replace(/\.mp3$/i, "");
+    if (format === "txt") downloadText(selectedTranscription.text, `${stem}.txt`);
+    if (format === "lrc") downloadText(segmentsToLrc(selectedTranscription.segments), `${stem}.lrc`);
+    if (format === "srt") downloadText(segmentsToSrt(selectedTranscription.segments), `${stem}.srt`);
+    if (format === "vtt") downloadText(segmentsToVtt(selectedTranscription.segments), `${stem}.vtt`, "text/vtt;charset=utf-8");
+  }
+
+  async function analyzeSong() {
+    if (!selected) return;
+    const lyrics = selected.tags.lyrics || selectedTranscription?.text || "";
+    setAnalysisLoading(true);
+    setMessage("Analyzing song themes and visual direction…");
+    try {
+      const response = await fetch("/api/song/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ artist: selected.tags.artist, title: selected.tags.title, album: selected.tags.album, lyrics }),
+      });
+      const data = await response.json() as { analysis?: SongAnalysis; error?: string };
+      if (!response.ok || !data.analysis) throw new Error(data.error || "Song analysis failed.");
+      setSongAnalyses((current) => ({ ...current, [selected.id]: data.analysis! }));
+      setConceptChoice((current) => ({ ...current, [selected.id]: data.analysis!.concepts[0]?.id || "" }));
+      setMessage(`Art Director created ${data.analysis.concepts.length} original visual concepts.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Song analysis failed.");
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }
+
+  async function generateSongArt() {
+    if (!selected || !selectedConcept) return;
+    setArtGenerating(true);
+    setMessage("Generating an original cover from the selected concept…");
+    try {
+      const response = await fetch("/api/artwork/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: selectedConcept.prompt,
+          artist: selected.tags.artist,
+          title: selected.tags.title,
+          album: selected.tags.album,
+          includeText: includeArtText,
+          direction: artDirection,
+        }),
+      });
+      const data = await response.json() as { image?: { b64: string; mimeType: string; label?: string }; error?: string };
+      if (!response.ok || !data.image?.b64) throw new Error(data.error || "Artwork generation failed.");
+      const buffer = base64ToArrayBuffer(data.image.b64);
+      const mimeType = data.image.mimeType || "image/jpeg";
+      const cover: CoverAsset = {
+        data: buffer,
+        url: URL.createObjectURL(new Blob([buffer], { type: mimeType })),
+        mimeType,
+        source: "generated",
+        label: data.image.label || `AI concept: ${selectedConcept.title}`,
+        width: 1024,
+        height: 1024,
+        bytes: buffer.byteLength,
+      };
+      setGeneratedArt((current) => {
+        revokeCover(current[selected.id]);
+        return { ...current, [selected.id]: cover };
+      });
+      setMessage("Original artwork generated. Review it before using it as the MP3 cover.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Artwork generation failed.");
+    } finally {
+      setArtGenerating(false);
+    }
+  }
+
+  function useGeneratedArtAsCover() {
+    if (!selected || !selectedGeneratedArt) return;
+    const cover = cloneCover(selectedGeneratedArt);
+    setTracks((current) => current.map((track) => {
+      if (track.id !== selected.id) return track;
+      revokeCover(track.cover);
+      return { ...track, cover, dirty: true };
+    }));
+    setMessage("Generated artwork applied as the current cover. Save/export to embed it in the MP3.");
+  }
+
   async function saveSelected() {
     if (!selected) return;
     setIsSaving(true);
     setMessage(undefined);
     try {
-      const blob = await writeMp3(selected.file, selected.tags, selected.cover);
+      const blob = await writeMp3(selected.file, selected.tags, selected.cover, selectedTranscription?.segments, selectedTranscription?.language);
       downloadBlob(blob, suggestedOutputName(selected));
       setMessage("Updated MP3 created. Your original file was not changed.");
     } catch (error) {
@@ -656,7 +825,8 @@ export default function TagStudio() {
     try {
       const zip = new JSZip();
       for (const track of tracks) {
-        const blob = await writeMp3(track.file, track.tags, track.cover);
+        const transcript = transcriptions[track.id];
+        const blob = await writeMp3(track.file, track.tags, track.cover, transcript?.segments, transcript?.language);
         zip.file(suggestedOutputName(track), blob);
       }
       const output = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
@@ -686,9 +856,9 @@ export default function TagStudio() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-semibold tracking-tight">fdgrc Tag Studio</h1>
-                <span className="version-badge">V1.5</span>
+                <span className="version-badge">V1.6</span>
               </div>
-              <p className="muted-soft text-xs">Smart MP3 metadata + cover art editor</p>
+              <p className="muted-soft text-xs">Smart MP3 metadata + lyrics + cover art editor</p>
             </div>
           </div>
 
@@ -931,13 +1101,55 @@ export default function TagStudio() {
                   <span className="field-label">Comment</span>
                   <textarea className="input min-h-20 resize-y" value={selected.tags.comment} onChange={(event) => updateTag("comment", event.target.value)} />
                 </label>
+                <div className="ai-transcribe-panel sm:col-span-2 rounded-2xl border p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 text-sm font-semibold"><span className="ai-badge">AI</span> Audio → Lyrics & Captions</div>
+                      <p className="muted-soft mt-1 text-xs">Cloud transcription sends this audio file through your Worker to OpenAI. Nothing is uploaded until you press Transcribe.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <select className="input input-compact w-[118px]" value={transcriptionLanguage} onChange={(event) => setTranscriptionLanguage(event.target.value)} title="Optional input language">
+                        <option value="">Auto language</option>
+                        <option value="en">English</option>
+                        <option value="es">Spanish</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="it">Italian</option>
+                        <option value="pt">Portuguese</option>
+                        <option value="ja">Japanese</option>
+                        <option value="ko">Korean</option>
+                        <option value="zh">Chinese</option>
+                        <option value="tl">Tagalog</option>
+                      </select>
+                      <button type="button" className="btn btn-smart text-xs" disabled={transcribeLoading} onClick={() => void transcribeSelected()}>{transcribeLoading ? "Transcribing…" : "Transcribe audio"}</button>
+                    </div>
+                  </div>
+                  {selectedTranscription && (
+                    <div className="mt-3">
+                      <div className="mb-2 flex flex-wrap gap-2 text-[11px]">
+                        <span className="reason-pill">{selectedTranscription.model}</span>
+                        {selectedTranscription.language && <span className="reason-pill">Language: {selectedTranscription.language}</span>}
+                        <span className="reason-pill">{selectedTranscription.segments.length} timed segments</span>
+                      </div>
+                      <div className="transcript-preview max-h-40 overflow-y-auto whitespace-pre-wrap rounded-xl border p-3 text-xs leading-relaxed">{selectedTranscription.text || "No text returned."}</div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button type="button" className="btn btn-secondary text-xs" onClick={useTranscriptAsLyrics}>Use as lyrics</button>
+                        <button type="button" className="btn btn-ghost text-xs" onClick={() => downloadTranscript("txt")}>TXT</button>
+                        <button type="button" className="btn btn-ghost text-xs" disabled={!selectedTranscription.segments.length} onClick={() => downloadTranscript("lrc")}>LRC</button>
+                        <button type="button" className="btn btn-ghost text-xs" disabled={!selectedTranscription.segments.length} onClick={() => downloadTranscript("srt")}>SRT</button>
+                        <button type="button" className="btn btn-ghost text-xs" disabled={!selectedTranscription.segments.length} onClick={() => downloadTranscript("vtt")}>VTT</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <label className="sm:col-span-2">
                   <span className="field-label flex items-center justify-between gap-2">
                     <span>Lyrics</span>
                     <button type="button" className="text-link" disabled={lyricsLoading || !selected.tags.title || !selected.tags.artist} onClick={() => void findLyrics()}>{lyricsLoading ? "Searching…" : "Find lyrics"}</button>
                   </span>
                   <textarea className="input min-h-36 resize-y" value={selected.tags.lyrics} onChange={(event) => updateTag("lyrics", event.target.value)} />
-                  <span className="muted-soft mt-1 block text-[11px]">Lyrics lookup uses LRCLIB and remains reviewable before export.</span>
+                  <span className="muted-soft mt-1 block text-[11px]">Lyrics lookup uses LRCLIB. AI transcription remains separate until you choose “Use as lyrics.”</span>
                 </label>
               </div>
 
@@ -1022,13 +1234,72 @@ export default function TagStudio() {
                   ))}
                 </div>
               )}
+
+              <div className="divider my-5 h-px" />
+              <div className="art-director rounded-2xl border p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-semibold"><span className="ai-badge">AI</span> Art Director</div>
+                    <p className="muted-soft mt-1 text-[11px]">Uses artist/title plus approved lyrics or transcript to create original concepts. Lyrics are summarized before image generation.</p>
+                  </div>
+                  <button className="btn btn-smart px-3 py-2 text-xs" disabled={analysisLoading} onClick={() => void analyzeSong()}>{analysisLoading ? "Analyzing…" : selectedAnalysis ? "Re-analyze" : "Analyze song"}</button>
+                </div>
+
+                {selectedAnalysis && (
+                  <div className="mt-4">
+                    <div className="art-summary rounded-xl border p-3">
+                      <div className="text-xs font-semibold">{selectedAnalysis.mood} · {selectedAnalysis.energy} energy</div>
+                      <p className="muted mt-1 text-xs leading-relaxed">{selectedAnalysis.summary}</p>
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {selectedAnalysis.themes.map((theme) => <span key={theme} className="reason-pill">{theme}</span>)}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {selectedAnalysis.palette.map((color) => <span key={color} className="palette-pill">{color}</span>)}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 text-xs font-semibold">Choose a visual concept</div>
+                    <div className="mt-2 grid gap-2">
+                      {selectedAnalysis.concepts.map((concept) => (
+                        <button key={concept.id} className={`concept-card rounded-xl border p-3 text-left ${selectedConcept?.id === concept.id ? "active" : ""}`} onClick={() => setConceptChoice((current) => ({ ...current, [selected.id]: concept.id }))}>
+                          <div className="text-xs font-semibold">{concept.title}</div>
+                          <div className="muted mt-1 text-[11px] leading-relaxed">{concept.description}</div>
+                        </button>
+                      ))}
+                    </div>
+
+                    <label className="mt-3 block">
+                      <span className="field-label">Additional direction</span>
+                      <input className="input" value={artDirection} placeholder="e.g. more minimal, warmer palette, analog film texture" onChange={(event) => setArtDirection(event.target.value)} />
+                    </label>
+                    <label className="muted mt-3 flex cursor-pointer items-center gap-2 text-xs">
+                      <input type="checkbox" checked={includeArtText} onChange={(event) => setIncludeArtText(event.target.checked)} />
+                      Ask generated art to include title + artist typography
+                    </label>
+                    <button className="btn btn-primary mt-3 w-full" disabled={!selectedConcept || artGenerating} onClick={() => void generateSongArt()}>{artGenerating ? "Generating cover…" : `Generate “${selectedConcept?.title || "concept"}”`}</button>
+                  </div>
+                )}
+
+                {selectedGeneratedArt && (
+                  <div className="mt-4">
+                    <div className="generated-art relative aspect-square overflow-hidden rounded-2xl border">
+                      <Image src={selectedGeneratedArt.url} alt="AI-generated cover preview" fill sizes="360px" className="object-cover" unoptimized />
+                    </div>
+                    <div className="mt-2 flex gap-2">
+                      <button className="btn btn-smart flex-1 text-xs" onClick={useGeneratedArtAsCover}>Use as cover</button>
+                      <button className="btn btn-ghost text-xs" disabled={artGenerating} onClick={() => void generateSongArt()}>Regenerate</button>
+                    </div>
+                    <p className="muted-soft mt-2 text-[11px]">Generated art remains a preview until you choose Use as cover.</p>
+                  </div>
+                )}
+              </div>
             </>
           ) : <div className="muted-soft grid min-h-[520px] place-items-center text-center text-sm">Select a track to manage its artwork.</div>}
         </aside>
       </div>
 
       {message && <button className="toast fixed bottom-5 left-1/2 z-50 max-w-[90vw] -translate-x-1/2 rounded-xl border px-4 py-3 text-left text-sm shadow-2xl" onClick={() => setMessage(undefined)}>{message}</button>}
-      <footer className="muted-soft mx-auto max-w-[1720px] px-5 pb-8 pt-2 text-center text-xs">Developed by Ferdinand Degracia — AI Assisted Engineering · Metadata: MusicBrainz · Lyrics lookup: LRCLIB</footer>
+      <footer className="muted-soft mx-auto max-w-[1720px] px-5 pb-8 pt-2 text-center text-xs">Developed by Ferdinand Degracia — AI Assisted Engineering · Metadata: MusicBrainz · Lyrics: LRCLIB + optional OpenAI transcription · Original art: optional OpenAI generation</footer>
     </main>
   );
 }
