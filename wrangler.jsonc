@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "fdgrc-tag-studio",
-  "compatibility_date": "2026-09-08",
+  "name": "audiotags",
+  "compatibility_date": "2026-09-06",
   "compatibility_flags": ["nodejs_compat"],
   "main": "vinext/server/app-router-entry",
   "preview_urls": true,

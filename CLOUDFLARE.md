@@ -1,6 +1,10 @@
-# Cloudflare Workers deployment
+# Cloudflare Workers deployment — fixed v1.1
 
 This project is prepared for **Cloudflare Workers + vinext**. It keeps the normal Next.js scripts for local compatibility and adds vinext scripts for the Worker runtime.
+
+> **Important:** This package is preconfigured for the connected Cloudflare Worker name `audiotags`. If you create a different Worker later, change the `name` field in `wrangler.jsonc` to exactly match the Worker name shown in Cloudflare.
+
+> The compatibility date is intentionally pinned to `2026-09-06` so Cloudflare builds running in UTC will not reject it as a future date. You can update it later after deployment.
 
 ## 1. Install
 
