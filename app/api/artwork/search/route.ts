@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { ArtworkSuggestion } from "@/types/audio";
 
-export const runtime = "nodejs";
-
 const MB_BASE = "https://musicbrainz.org/ws/2";
-const USER_AGENT = process.env.MUSICBRAINZ_USER_AGENT || "fdgrc-tag-studio/0.1 (https://github.com/dinanski123/synthiq)";
+const USER_AGENT =
+  process.env.MUSICBRAINZ_USER_AGENT ||
+  "fdgrc-tag-studio/1.0 (set MUSICBRAINZ_USER_AGENT before public deployment)";
 
 type MBRelease = {
   id: string;

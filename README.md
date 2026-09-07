@@ -1,71 +1,86 @@
-# fdgrc Tag Studio — V1
+# fdgrc Tag Studio — Cloudflare Workers Edition
 
-Privacy-first MP3 metadata and cover-art editor built with Next.js.
+Privacy-first MP3 metadata and cover-art editor built with Next.js 16 and prepared for **Cloudflare Workers using vinext**.
 
-## What V1 does
+## What it does
 
 - Import one or many MP3 files in the browser
 - Read ID3 metadata and embedded cover art locally
 - Edit title, artist, album, album artist, year, track, disc, genre, composer, BPM, comment, lyrics, and ISRC
-- Preview the audio without uploading it
-- Upload/replace/remove artwork
-- Automatically search MusicBrainz + Cover Art Archive for matching artwork
-- Embed the selected front cover into the exported MP3
-- Export one updated MP3 or all tracks as a ZIP
-- Keep original MP3 files unchanged
-
-## Run it
-
-```bash
-npm install
-npm run dev
-```
-
-Open http://localhost:3000.
-
-## Recommended first-time setup
-
-1. Copy `.env.example` to `.env.local`.
-2. Replace the placeholder `MUSICBRAINZ_USER_AGENT` contact URL with your real GitHub repo URL or email.
-3. Restart `npm run dev`.
-
-MusicBrainz asks client applications to identify themselves and to stay at or below one API request per second. This app performs a single MusicBrainz lookup per artwork search and caches server results.
+- Preview audio without uploading the MP3
+- Upload, replace, or remove artwork
+- Search MusicBrainz + Cover Art Archive for matching covers
+- Show artwork suggestions with MusicBrainz match scores
+- Embed selected front artwork into exported MP3 files
+- Export one modified MP3 or all tracks as a ZIP
+- Keep the original files untouched
 
 ## Privacy model
 
-The actual MP3 is parsed and rewritten in the browser. Artwork search sends only the text fields needed for matching (artist, album, title) to this app's API route. The route talks to MusicBrainz and Cover Art Archive.
+The actual audio file never needs to be sent to the server. MP3 parsing, ID3 editing, cover embedding, audio playback, and ZIP creation all happen locally in the browser.
+
+Only artist/album/title text used for artwork matching is sent to the application's API routes.
+
+## Quick start — normal Next.js
+
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+Then open `http://localhost:3000`.
+
+## Quick start — Cloudflare/vinext
+
+```bash
+npm install
+npm run check:vinext
+npm run dev:vinext
+```
+
+Build for Workers:
+
+```bash
+npm run build:vinext
+```
+
+Deploy:
+
+```bash
+npx wrangler login
+npm run deploy
+```
+
+See **CLOUDFLARE.md** for the full GitHub/Cloudflare dashboard setup.
+
+## Cloudflare-ready additions
+
+- `vite.config.ts` configures vinext and `@cloudflare/vite-plugin`
+- `wrangler.jsonc` targets the vinext App Router Worker entry
+- API routes use Web-standard request/fetch/stream APIs
+- Node-only runtime declarations were removed
+- `/api/health` provides a simple post-deploy check
+- The artwork proxy validates every redirect before following it
+
+## MusicBrainz setup
+
+Before public deployment, set `MUSICBRAINZ_USER_AGENT` to identify the app with a contact address or project URL. The example files contain a placeholder that you should replace.
 
 ## Important V1 limitation
 
-`browser-id3-writer` replaces the existing ID3 tag. V1 first reads the common fields listed above and writes those fields back, but uncommon/private/unsupported ID3 frames may not be preserved. Keep originals until a later full-frame preservation layer is added.
+`browser-id3-writer` replaces the existing ID3 tag. V1 reads and writes the common metadata fields supported by the editor, but uncommon/private/unsupported ID3 frames may not be preserved. Keep your original files until a later full-frame preservation layer is added.
 
-## Suggested next versions
+## Recommended next upgrade — Smart Fix
 
-### V1.1
 - Better filename-to-tag cleanup
-- Apply one field or cover to selected tracks
-- Cover crop/resize/compression before embedding
-- Better error handling for artwork sources
-
-### V2 — Smart Fix
-- Compare filename, existing tags, duration, album and track number
-- Suggest corrected metadata with confidence scores
-- Album grouping and automatic shared cover assignment
-- Review all changes before applying them
-
-### V3
+- Apply metadata or artwork to multiple selected tracks
+- Album grouping
+- Auto-pick shared album covers
+- Cover resize/compression before embedding
+- Review all proposed metadata changes before applying
+- Better metadata confidence scoring
 - Preserve unknown ID3 frames
-- Rename files from tags
-- Undo/redo and edit history
-- PWA/offline shell
-- Optional additional artwork/metadata providers
-
-## Production build
-
-```bash
-npm run build
-npm start
-```
 
 ## Credits
 
