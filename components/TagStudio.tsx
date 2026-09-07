@@ -123,6 +123,7 @@ function revokeCover(cover?: CoverAsset) {
 
 function revokeTrackUrls(track: TrackItem) {
   URL.revokeObjectURL(track.audioUrl);
+  if (track.updatedAudioUrl) URL.revokeObjectURL(track.updatedAudioUrl);
   revokeCover(track.cover);
   if (track.originalCover?.url !== track.cover?.url) revokeCover(track.originalCover);
 }
@@ -166,6 +167,7 @@ export default function TagStudio() {
   const [albumFilter, setAlbumFilter] = useState("all");
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [previewMode, setPreviewMode] = useState<Record<string, "original" | "updated">>({});
   const [message, setMessage] = useState<string>();
   const [artwork, setArtwork] = useState<ArtworkSuggestion[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -210,6 +212,8 @@ export default function TagStudio() {
   const lastMbRequestAt = useRef(0);
 
   const selected = useMemo(() => tracks.find((track) => track.id === selectedId), [tracks, selectedId]);
+  const selectedPreviewMode = selected ? (previewMode[selected.id] || "original") : "original";
+  const selectedPreviewUrl = selected && selectedPreviewMode === "updated" && selected.updatedAudioUrl ? selected.updatedAudioUrl : selected?.audioUrl;
   const checkedSet = useMemo(() => new Set(checkedIds), [checkedIds]);
   const dirtyCount = useMemo(() => tracks.filter((track) => track.dirty).length, [tracks]);
   const duplicates = useMemo(() => duplicateIdSet(tracks), [tracks]);
@@ -402,6 +406,7 @@ export default function TagStudio() {
     const remaining = tracks.filter((track) => track.id !== id);
     setTracks(remaining);
     setCheckedIds((current) => current.filter((item) => item !== id));
+    setPreviewMode((current) => { const next = { ...current }; delete next[id]; return next; });
     setSmartSuggestions((current) => {
       const next = { ...current };
       delete next[id];
@@ -423,6 +428,7 @@ export default function TagStudio() {
     setTracks([]);
     setSelectedId(undefined);
     setCheckedIds([]);
+    setPreviewMode({});
     for (const cover of Object.values(generatedArt) as CoverAsset[]) revokeCover(cover);
     setArtwork([]);
     setSmartSuggestions({});
@@ -801,7 +807,7 @@ export default function TagStudio() {
       setBrowserWhisperReady(support.supported);
       if (!support.supported) {
         setTranscribeLoading(false);
-        setMessage(support.isolated ? "On-device whisper.cpp is not supported by this browser. Choose Desktop helper instead." : "On-device whisper.cpp needs the new isolation headers. Fully close/reopen AudioTags after the V1.6.5 deploy and retry.");
+        setMessage(support.isolated ? "On-device whisper.cpp is not supported by this browser. Choose Desktop helper instead." : "On-device whisper.cpp needs the new isolation headers. Fully close/reopen AudioTags after the V1.6.5.1 deploy and retry.");
         return;
       }
       setMessage(`Preparing on-device whisper.cpp · ${browserWhisperModel}…`);
@@ -925,12 +931,36 @@ export default function TagStudio() {
     setIsSaving(true);
     setMessage(undefined);
     try {
-      const blob = await writeMp3(selected.file, selected.tags, selected.cover, selectedTranscription?.segments, selectedTranscription?.language);
-      downloadBlob(blob, suggestedOutputName(selected));
-      setMessage("Updated MP3 created. Your original file was not changed.");
+      const result = await writeMp3(
+        selected.file,
+        selected.tags,
+        selected.cover,
+        selectedTranscription?.segments,
+        selectedTranscription?.language,
+        (progress) => {
+          const pct = typeof progress.fraction === "number" ? ` · ${Math.round(progress.fraction * 100)}%` : "";
+          setMessage(`${progress.stage}${pct}${progress.detail ? ` · ${progress.detail}` : ""}`);
+        },
+      );
+
+      const updatedAudioUrl = URL.createObjectURL(result.blob);
+      setTracks((current) => current.map((track) => {
+        if (track.id !== selected.id) return track;
+        if (track.updatedAudioUrl) URL.revokeObjectURL(track.updatedAudioUrl);
+        return { ...track, updatedAudioUrl };
+      }));
+      setPreviewMode((current) => ({ ...current, [selected.id]: "updated" }));
+      downloadBlob(result.blob, suggestedOutputName(selected));
+
+      const notes = [
+        result.convertedSource ? `${result.sourceInfo.label} was converted locally to a genuine MP3 before tagging.` : "Original MPEG audio stream preserved.",
+        "Playback validation passed.",
+        result.syncedLyricsDropped ? "Timed SYLT was omitted for compatibility; plain lyrics were kept." : "",
+      ].filter(Boolean);
+      setMessage(`Updated MP3 created and loaded into the player. ${notes.join(" ")}`);
     } catch (error) {
       console.error(error);
-      setMessage("Could not create the updated MP3.");
+      setMessage(error instanceof Error ? error.message : "Could not create a playable updated MP3.");
     } finally {
       setIsSaving(false);
     }
@@ -942,17 +972,34 @@ export default function TagStudio() {
     setMessage(undefined);
     try {
       const zip = new JSZip();
-      for (const track of tracks) {
+      let convertedCount = 0;
+      let compatibilityRetries = 0;
+      for (let index = 0; index < tracks.length; index += 1) {
+        const track = tracks[index];
         const transcript = transcriptions[track.id];
-        const blob = await writeMp3(track.file, track.tags, track.cover, transcript?.segments, transcript?.language);
-        zip.file(suggestedOutputName(track), blob);
+        const result = await writeMp3(
+          track.file,
+          track.tags,
+          track.cover,
+          transcript?.segments,
+          transcript?.language,
+          (progress) => {
+            const pct = typeof progress.fraction === "number" ? ` · ${Math.round(progress.fraction * 100)}%` : "";
+            setMessage(`Track ${index + 1}/${tracks.length}: ${progress.stage}${pct}`);
+          },
+        );
+        if (result.convertedSource) convertedCount += 1;
+        if (result.syncedLyricsDropped) compatibilityRetries += 1;
+        zip.file(suggestedOutputName(track), result.blob);
       }
       const output = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } });
       downloadBlob(output, "fdgrc-tag-studio-export.zip");
-      setMessage(`${tracks.length} updated MP3 files exported as ZIP.`);
+      const convertedNote = convertedCount ? ` ${convertedCount} mislabeled/non-MP3 source${convertedCount === 1 ? " was" : "s were"} converted locally first.` : "";
+      const lyricsNote = compatibilityRetries ? ` ${compatibilityRetries} track${compatibilityRetries === 1 ? "" : "s"} used plain lyrics instead of SYLT for playback compatibility.` : "";
+      setMessage(`${tracks.length} validated MP3 files exported as ZIP.${convertedNote}${lyricsNote}`);
     } catch (error) {
       console.error(error);
-      setMessage("Could not finish the batch export.");
+      setMessage(error instanceof Error ? error.message : "Could not finish the validated batch export.");
     } finally {
       setIsSaving(false);
     }
@@ -974,7 +1021,7 @@ export default function TagStudio() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-semibold tracking-tight">fdgrc Tag Studio</h1>
-                <span className="version-badge">V1.6.5</span>
+                <span className="version-badge">V1.6.5.1</span>
               </div>
               <p className="muted-soft text-xs">Smart MP3 metadata + lyrics + cover art editor</p>
             </div>
@@ -1150,11 +1197,31 @@ export default function TagStudio() {
                     <span>{formatBitrate(selected.bitrate)}</span>
                     <span>{selected.sampleRate ? `${(selected.sampleRate / 1000).toFixed(1)} kHz` : "—"}</span>
                     <span>{(selected.file.size / 1024 / 1024).toFixed(1)} MB</span>
+                    <span className={selected.sourceInfo.extensionMismatch ? "warning-text" : ""}>{selected.sourceInfo.label}</span>
                     {duplicates.has(selected.id) && <span className="warning-text">Possible duplicate</span>}
                   </div>
                 </div>
-                <audio controls src={selected.audioUrl} className="h-10 w-full max-w-lg" />
+                <div className="w-full max-w-lg">
+                  <audio controls src={selectedPreviewUrl} className="h-10 w-full" />
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    <div className="flex items-center gap-2">
+                      <button type="button" className={`btn btn-ghost px-2 py-1 text-[11px] ${selectedPreviewMode === "original" ? "active" : ""}`} onClick={() => setPreviewMode((current) => ({ ...current, [selected.id]: "original" }))}>Original</button>
+                      <button type="button" className={`btn btn-ghost px-2 py-1 text-[11px] ${selectedPreviewMode === "updated" ? "active" : ""}`} disabled={!selected.updatedAudioUrl} onClick={() => setPreviewMode((current) => ({ ...current, [selected.id]: "updated" }))}>Updated</button>
+                    </div>
+                    <span className="muted-soft">{selected.updatedAudioUrl ? (selectedPreviewMode === "updated" ? "Playing last validated export" : "Playing imported source") : "Save once to preview the validated export"}</span>
+                  </div>
+                </div>
               </div>
+
+              {selected.sourceInfo.needsTranscode && (
+                <div className="mb-6 rounded-2xl border border-amber-400/40 bg-amber-500/10 p-4 text-sm">
+                  <div className="font-semibold">Source format safety: {selected.sourceInfo.label}</div>
+                  <div className="muted mt-1 text-xs">
+                    {selected.sourceInfo.extensionMismatch ? "This file is named .mp3 but its audio stream is not MP3. " : "This source is not MPEG Layer III. "}
+                    AudioTags will decode it locally, encode a genuine 192 kbps MP3, write ID3, then verify MPEG frames before allowing the download. The audio file is not uploaded.
+                  </div>
+                </div>
+              )}
 
               <div className="smart-panel mb-6 rounded-2xl border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1249,7 +1316,7 @@ export default function TagStudio() {
                     <div className="mt-3 rounded-xl border border-dashed p-3 text-xs">
                       <input ref={browserModelInput} type="file" accept=".bin,application/octet-stream" className="hidden" onChange={(event) => void importBrowserWhisperModel(event)} />
                       <div className="font-semibold">On-device whisper.cpp · multilingual · zero paid API</div>
-                      <div className="muted-soft mt-1">Status: {browserWhisperReady === false ? (browserWhisperSupport().isolated ? "Browser lacks required WASM support" : "Needs one full reload after the V1.6.5 deploy") : "Ready · WASM SIMD + isolated browser"}. Model: {browserWhisperModelCached ? "cached on this device ✓" : "first run prefers same-origin bundled chunks, then a free relay fallback"}.</div>
+                      <div className="muted-soft mt-1">Status: {browserWhisperReady === false ? (browserWhisperSupport().isolated ? "Browser lacks required WASM support" : "Needs one full reload after the V1.6.5.1 deploy") : "Ready · WASM SIMD + isolated browser"}. Model: {browserWhisperModelCached ? "cached on this device ✓" : "first run prefers same-origin bundled chunks, then a free relay fallback"}.</div>
                       {browserWhisperProgress && <div className="muted-soft mt-1">{browserWhisperProgress.stage}{typeof browserWhisperProgress.fraction === "number" ? ` · ${Math.round(browserWhisperProgress.fraction * 100)}%` : ""}{browserWhisperProgress.detail ? ` · ${browserWhisperProgress.detail}` : ""}</div>}
                       <div className="muted-soft mt-1">This is now a real whisper.cpp/GGML path like the SynthIQ mobile feature — no Transformers.js, no ONNX model CDN, and your MP3 stays local. Tiny Q5 is recommended for phones; Base Q5 improves lyrics on newer devices.</div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1298,7 +1365,7 @@ export default function TagStudio() {
               </div>
 
               <div className="border-theme mt-6 flex flex-wrap items-center gap-3 border-t pt-5">
-                <button className="btn btn-primary" disabled={isSaving} onClick={() => void saveSelected()}>{isSaving ? "Creating MP3…" : "Save updated MP3"}</button>
+                <button className="btn btn-primary" disabled={isSaving} onClick={() => void saveSelected()}>{isSaving ? "Creating + validating…" : "Save updated MP3"}</button>
                 <button className="btn btn-secondary" onClick={() => {
                   const guessed = guessTagsFromFileName(selected.fileName);
                   updateTrackTags(selected.id, (tags) => ({ ...tags, ...Object.fromEntries(Object.entries(guessed).filter(([, value]) => value)) } as EditableTags));

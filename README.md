@@ -1,83 +1,69 @@
-# fdgrc Tag Studio V1.6.2.4 — No-Payment Edition
+# fdgrc Tag Studio V1.6.5.1 — No-Payment Edition
 
-Privacy-first MP3 metadata, cover-art, Smart Fix, lyrics/caption, batch, and local transcription editor built with Next.js 16 for **Cloudflare Workers using vinext**.
+AudioTags is a privacy-first MP3 metadata, lyrics, caption and cover-art editor designed for **Cloudflare Workers + vinext**. MP3 reading/writing remains local in the browser.
 
-## The important change
+AudioTags V1.6.5.1 does **not** require an OpenAI API key or paid AI subscription.
 
-**No OpenAI API key and no paid AI API are required.**
+## Highlights
 
-V1.6.2 uses:
+- Local MP3 ID3 read/edit/write and batch ZIP export.
+- Smart Fix metadata lookup with MusicBrainz plus Apple Search fallback.
+- Official cover lookup through MusicBrainz/Cover Art Archive plus Apple artwork fallback.
+- LRCLIB lyrics lookup.
+- **On-device whisper.cpp WebAssembly transcription** for phones, tablets and desktop browsers.
+- Quantized multilingual Tiny Q5 (31 MB) and Base Q5 (57 MB) model choices.
+- Timed TXT/LRC/SRT/VTT output and synchronized ID3 lyrics.
+- Optional desktop WhisperHallu + WhisperTimeSync helper for higher-powered local transcription.
+- Art Director 2: local song/lyrics theme analysis, six visual directions, and local 1024×1024 cover rendering.
+- PWA install support, light/system/dark themes, library cleanup and batch tools.
+- **Playback-safe export:** detects fake/mislabeled `.mp3` files, locally converts non-MP3 audio to genuine MP3, validates MPEG frames, and previews the exact updated export.
 
-- **Whisper Base in the browser/PWA** for no-payment on-device mobile transcription
-- optional **WhisperHallu** for desktop music-oriented preprocessing and transcription
-- optional **WhisperTimeSync** for desktop timestamp alignment
-- **MusicBrainz + Cover Art Archive** for official metadata/artwork suggestions
-- **LRCLIB** for lyrics lookup
-- local browser heuristics for lyrics-aware mood/theme/art concepts
-- local Canvas rendering for original 1024×1024 concept covers
+## V1.6.5.1 playback safety
 
-The hosted Cloudflare Worker never receives the MP3 for transcription. On mobile/PWA, transcription runs directly in the browser; desktop users can optionally use the local helper.
+AudioTags no longer trusts the filename extension. If a file is called `.mp3` but is actually WebM/Opus or another browser-decodable format, the app converts it locally to a genuine 192 kbps MP3 before writing ID3. Generated files are scanned for valid MPEG Layer III frames before download, and the player can switch between the imported source and the exact validated updated file.
 
-## Audio → Lyrics & Captions
+See `PLAYBACK-SAFETY.md` for the save pipeline and failure behavior.
 
-**Mobile/PWA:** import a track, choose **On this device**, and press **Transcribe audio**. The first run downloads Whisper Base through AudioTags' same-origin Cloudflare relay and later runs reuse the browser cache when available. The phone no longer needs direct access to jsDelivr, UNPKG, or Hugging Face.
+## V1.6.4 mobile transcription repair
 
-**Desktop helper (optional):** install/start `LOCAL-TRANSCRIBER.md`, choose **Desktop helper**, then pair it with AudioTags.
+V1.6.4 removes the earlier Transformers.js/ONNX pipeline entirely. The browser now runs whisper.cpp itself. The WebAssembly engine is a normal project dependency, while the Cloudflare build prepares Tiny Q5 into small static model chunks served from your own AudioTags origin.
 
-Outputs include TXT, LRC, SRT and VTT. Saving the MP3 can embed ordinary `USLT` lyrics and synchronized `SYLT` lyrics when timed segments are available.
+On first use, AudioTags checks those same-origin static chunks first, then a free same-origin Worker relay, then offers **Import model .bin** as a manual/offline fallback. Successful models are cached in IndexedDB when possible. The transcription panel also has **Check model delivery** so a non-developer can see which path is ready before starting a song.
 
-## Lyrics-aware Art Director
+See `MOBILE-WHISPER.md` for details.
 
-Song analysis now runs locally in the browser. It turns artist/title/lyrics into mood, themes, palette and three cover concepts without sending lyrics to an LLM. The selected concept can be rendered as an original square cover locally in Canvas, or you can continue using official artwork search.
+## Cloudflare
 
-## Cloudflare deployment
-
-Your existing settings stay the same:
-
-```text
-Build command:  npm run build:vinext
-Deploy command: npm run deploy:built
-Root directory: /
-```
-
-No AI secret is needed in Cloudflare.
-
-### V1.6.2.4 mobile download relay
-
-To avoid mobile private-DNS/ad-blocker/CDN failures, the browser now requests the Transformers.js runtime, ONNX WASM files, and allowed Whisper Base model files from the **same AudioTags origin**. Cloudflare relays those public files server-side. This remains free and the MP3 itself is never uploaded to Cloudflare for transcription.
-
-Optional MusicBrainz identification:
-
-```env
-MUSICBRAINZ_USER_AGENT="AudioTags/1.6.2 (you@example.com)"
-```
-
-## Local development
+Build:
 
 ```bash
-npm install
-npm run dev:vinext
+npm run build:vinext
 ```
 
-## Local transcriber
+Deploy an already-built output:
 
-See [`LOCAL-TRANSCRIBER.md`](./LOCAL-TRANSCRIBER.md).
+```bash
+npm run deploy:built
+```
 
-The project intentionally does not vendor the WhisperHallu or WhisperTimeSync repositories. Their current GitHub repository metadata does not declare a license. The setup helper clones those upstream repositories directly for local use so their source is not repackaged inside AudioTags.
+No AI secret is required. Recommended optional environment value:
 
-## Important ID3 limitation
+```text
+MUSICBRAINZ_USER_AGENT="AudioTags/1.6.5.1 (you@example.com)"
+```
 
-`browser-id3-writer` replaces the existing ID3 tag. AudioTags reads and rewrites the fields exposed by this editor and supports `USLT` and `SYLT`, but uncommon/private/unsupported ID3 frames may still be lost. Keep original files.
+See `CLOUDFLARE.md` for deployment notes.
 
-## Credits
+## Privacy
 
-Developed by Ferdinand Degracia — AI Assisted Engineering
+- Imported MP3 audio is not uploaded for normal tag editing.
+- On-device whisper.cpp receives the decoded 16 kHz waveform in browser memory only.
+- Metadata lookup sends text fields such as artist/title/album to public metadata services.
+- Cover and metadata proxy routes run through your Cloudflare Worker.
+- Original MP3 files are never overwritten automatically.
 
-Local transcription integrations reference:
-- https://github.com/EtienneAb3d/WhisperHallu
-- https://github.com/EtienneAb3d/WhisperTimeSync
+## Important limitations
 
-
-## V1.6.2 mobile Whisper
-
-AudioTags can now transcribe directly on supported phones/tablets in the browser/PWA with Whisper Base. No paid API and no desktop computer are required for this mode. WebGPU is preferred; WASM/CPU is the fallback. The existing WhisperHallu + WhisperTimeSync desktop helper remains available as an optional engine. See `MOBILE-WHISPER.md`.
+- Browser ID3 writing still cannot guarantee preservation of every unknown/private ID3 frame. Keep original files.
+- Music transcription is harder than ordinary speech; vocal-heavy mixes may need Base Q5 or the desktop WhisperHallu helper.
+- whisper.cpp WASM uses significant RAM. Older mobile browsers may only handle Tiny Q5 reliably.

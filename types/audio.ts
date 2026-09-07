@@ -1,3 +1,5 @@
+import type { AudioSourceInfo } from "@/lib/audio/audioFormat";
+
 export type EditableTags = {
   title: string;
   artist: string;
@@ -37,6 +39,8 @@ export type TrackItem = {
   cover?: CoverAsset;
   originalCover?: CoverAsset;
   audioUrl: string;
+  updatedAudioUrl?: string;
+  sourceInfo: AudioSourceInfo;
   dirty: boolean;
 };
 
@@ -49,7 +53,7 @@ export type ArtworkSuggestion = {
   country?: string;
   score: number;
   imageUrl: string;
-  source: "MusicBrainz / Cover Art Archive";
+  source: "MusicBrainz / Cover Art Archive" | "Apple Search";
 };
 
 export type MetadataSuggestion = {
@@ -57,7 +61,7 @@ export type MetadataSuggestion = {
   recordingId: string;
   releaseId?: string;
   score: number;
-  source: "MusicBrainz";
+  source: "MusicBrainz" | "Apple Search";
   tags: Partial<EditableTags>;
   reasons: string[];
   coverUrl?: string;

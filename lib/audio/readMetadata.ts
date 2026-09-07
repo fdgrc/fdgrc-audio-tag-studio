@@ -1,6 +1,7 @@
 import { parseBlob } from "music-metadata";
 import type { CoverAsset, EditableTags, TrackItem } from "@/types/audio";
 import { emptyTags, guessTagsFromFileName } from "./guessTags";
+import { inspectAudioFile, playbackBlob } from "./audioFormat";
 
 function toText(value: string | number | undefined | null) {
   return value == null ? "" : String(value);
@@ -29,7 +30,23 @@ function pictureToCover(picture: NonNullable<Awaited<ReturnType<typeof parseBlob
 }
 
 export async function readTrack(file: File): Promise<TrackItem> {
-  const metadata = await parseBlob(file, { duration: true });
+  const initialSourceInfo = await inspectAudioFile(file);
+  let metadata: Awaited<ReturnType<typeof parseBlob>>;
+  try {
+    metadata = await parseBlob(file, { duration: true });
+  } catch (error) {
+    if (!initialSourceInfo.isMp3 && initialSourceInfo.id3Bytes > 0 && initialSourceInfo.id3Bytes < file.size) {
+      // Rescue an older broken AudioTags-style hybrid (ID3 prepended to WebM/Opus, etc.)
+      // by parsing the real container after the leading ID3 bytes.
+      metadata = await parseBlob(file.slice(initialSourceInfo.id3Bytes, file.size, initialSourceInfo.mimeType), { duration: true });
+    } else {
+      throw error;
+    }
+  }
+  const sourceInfo = await inspectAudioFile(file, {
+    container: metadata.format.container,
+    codec: metadata.format.codec,
+  });
   const common = metadata.common;
   const guessed = guessTagsFromFileName(file.name);
   const base = emptyTags();
@@ -66,7 +83,8 @@ export async function readTrack(file: File): Promise<TrackItem> {
     originalTags: { ...tags },
     cover,
     originalCover,
-    audioUrl: URL.createObjectURL(file),
+    audioUrl: URL.createObjectURL(playbackBlob(file, sourceInfo)),
+    sourceInfo,
     dirty: false,
   };
 }

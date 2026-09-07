@@ -1,6 +1,8 @@
 import { ID3Writer } from "browser-id3-writer";
 import type { CoverAsset, EditableTags, TrackItem, TranscriptSegment } from "@/types/audio";
 import { segmentsToSyncedLyrics } from "@/lib/audio/captions";
+import { inspectAudioFile, validatePlayableMp3, type AudioSourceInfo, type Mp3Validation } from "@/lib/audio/audioFormat";
+import { transcodeBrowserAudioToMp3, type Mp3TranscodeProgress } from "@/lib/audio/transcodeToMp3";
 import { safeFileName } from "@/lib/format";
 
 function splitList(value: string) {
@@ -24,14 +26,24 @@ function id3Language(language?: string) {
   return map[key] || "eng";
 }
 
-export async function writeMp3(
-  file: File,
+export type Mp3WriteProgress = Mp3TranscodeProgress;
+
+export type Mp3WriteResult = {
+  blob: Blob;
+  convertedSource: boolean;
+  sourceInfo: AudioSourceInfo;
+  validation: Mp3Validation;
+  syncedLyricsDropped: boolean;
+};
+
+async function buildTaggedBlob(
+  source: ArrayBuffer,
   tags: EditableTags,
-  cover?: CoverAsset,
-  timedLyrics?: TranscriptSegment[],
-  lyricsLanguage?: string,
+  cover: CoverAsset | undefined,
+  timedLyrics: TranscriptSegment[] | undefined,
+  lyricsLanguage: string | undefined,
+  includeSyncedLyrics: boolean,
 ) {
-  const source = await file.arrayBuffer();
   const writer = new ID3Writer(source);
 
   if (tags.title) writer.setFrame("TIT2", tags.title);
@@ -59,7 +71,7 @@ export async function writeMp3(
       language: id3Language(lyricsLanguage),
     });
   }
-  if (timedLyrics?.length) {
+  if (includeSyncedLyrics && timedLyrics?.length) {
     const synced = segmentsToSyncedLyrics(timedLyrics);
     if (synced.length) {
       writer.setFrame("SYLT", {
@@ -85,9 +97,55 @@ export async function writeMp3(
   return writer.getBlob();
 }
 
+export async function writeMp3(
+  file: File,
+  tags: EditableTags,
+  cover?: CoverAsset,
+  timedLyrics?: TranscriptSegment[],
+  lyricsLanguage?: string,
+  onProgress?: (progress: Mp3WriteProgress) => void,
+): Promise<Mp3WriteResult> {
+  const sourceInfo = await inspectAudioFile(file);
+  let source: ArrayBuffer;
+  let convertedSource = false;
+
+  if (sourceInfo.isMp3) {
+    onProgress?.({ stage: "Preparing MP3 tags", fraction: 0.1, detail: "Source MPEG audio verified" });
+    source = await file.arrayBuffer();
+  } else {
+    convertedSource = true;
+    onProgress?.({ stage: `Source is ${sourceInfo.label}`, fraction: 0.02, detail: "Converting locally before ID3 write" });
+    const converted = await transcodeBrowserAudioToMp3(file, onProgress, 192, sourceInfo.id3Bytes);
+    const rawValidation = await validatePlayableMp3(converted);
+    if (!rawValidation.valid) {
+      throw new Error(rawValidation.reason || "The locally converted audio did not contain a valid MP3 stream.");
+    }
+    source = await converted.arrayBuffer();
+  }
+
+  onProgress?.({ stage: "Writing ID3 metadata", fraction: 0.95, detail: "Title · artwork · lyrics" });
+  let blob = await buildTaggedBlob(source, tags, cover, timedLyrics, lyricsLanguage, true);
+  let validation = await validatePlayableMp3(blob);
+  let syncedLyricsDropped = false;
+
+  if (!validation.valid && timedLyrics?.length) {
+    onProgress?.({ stage: "Compatibility retry", fraction: 0.97, detail: "Retrying without synchronized SYLT frame" });
+    blob = await buildTaggedBlob(source, tags, cover, timedLyrics, lyricsLanguage, false);
+    validation = await validatePlayableMp3(blob);
+    syncedLyricsDropped = validation.valid;
+  }
+
+  if (!validation.valid) {
+    throw new Error(validation.reason || "The output failed MP3 playback validation. Nothing was downloaded.");
+  }
+
+  onProgress?.({ stage: "Playable MP3 verified", fraction: 1, detail: `Audio starts at byte ${validation.firstFrameOffset ?? "verified"}` });
+  return { blob, convertedSource, sourceInfo, validation, syncedLyricsDropped };
+}
+
 export function suggestedOutputName(track: TrackItem) {
   const { track: trackNumber, artist, title } = track.tags;
   const prefix = trackNumber ? `${trackNumber.padStart(2, "0")} - ` : "";
-  const name = artist && title ? `${prefix}${artist} - ${title}` : title || track.fileName.replace(/\.mp3$/i, "");
+  const name = artist && title ? `${prefix}${artist} - ${title}` : title || track.fileName.replace(/\.[^.]+$/i, "");
   return `${safeFileName(name)}.mp3`;
 }
