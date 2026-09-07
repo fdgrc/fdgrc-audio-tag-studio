@@ -22,6 +22,16 @@ const fields: Array<{ key: keyof EditableTags; label: string; placeholder?: stri
   { key: "isrc", label: "ISRC", placeholder: "Optional" },
 ];
 
+type ThemeMode = "light" | "system" | "dark";
+
+const themeOptions: Array<{ value: ThemeMode; icon: string; label: string }> = [
+  { value: "light", icon: "☀", label: "Light" },
+  { value: "system", icon: "◐", label: "System" },
+  { value: "dark", icon: "☾", label: "Dark" },
+];
+
+const THEME_STORAGE_KEY = "fdgrc-tag-studio-theme";
+
 function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -48,11 +58,28 @@ export default function TagStudio() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string>();
   const [lastSearchKey, setLastSearchKey] = useState("");
+  const [theme, setTheme] = useState<ThemeMode>("system");
   const fileInput = useRef<HTMLInputElement>(null);
   const coverInput = useRef<HTMLInputElement>(null);
   const tracksRef = useRef<TrackItem[]>([]);
 
   const selected = useMemo(() => tracks.find((track) => track.id === selectedId), [tracks, selectedId]);
+  const dirtyCount = useMemo(() => tracks.filter((track) => track.dirty).length, [tracks]);
+
+  useEffect(() => {
+    const current = document.documentElement.dataset.theme;
+    if (current === "light" || current === "dark" || current === "system") setTheme(current);
+  }, []);
+
+  function changeTheme(nextTheme: ThemeMode) {
+    setTheme(nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch {
+      // Theme still applies for the current session when storage is unavailable.
+    }
+  }
 
   useEffect(() => {
     tracksRef.current = tracks;
@@ -225,19 +252,33 @@ export default function TagStudio() {
   }
 
   return (
-    <main className="min-h-screen bg-[#080a0f] text-white">
-      <header className="border-b border-white/10 bg-black/30 backdrop-blur">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-5 py-4 lg:px-8">
-          <div>
-            <div className="flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-400 font-black text-black">F</div>
-              <div>
-                <h1 className="text-lg font-semibold tracking-tight">fdgrc Tag Studio</h1>
-                <p className="text-xs text-white/45">MP3 metadata + cover art editor</p>
-              </div>
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-4 lg:px-8">
+          <div className="flex items-center gap-3">
+            <div className="brand-tile grid h-10 w-10 place-items-center rounded-xl font-black">F</div>
+            <div>
+              <h1 className="text-lg font-semibold tracking-tight">fdgrc Tag Studio</h1>
+              <p className="muted-soft text-xs">MP3 metadata + cover art editor</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="theme-switch" role="group" aria-label="Color theme">
+              {themeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`theme-option ${theme === option.value ? "active" : ""}`}
+                  aria-pressed={theme === option.value}
+                  title={`${option.label} theme`}
+                  onClick={() => changeTheme(option.value)}
+                >
+                  <span aria-hidden="true">{option.icon}</span> <span className="theme-label">{option.label}</span>
+                </button>
+              ))}
+            </div>
+            {dirtyCount > 0 && <span className="muted hidden text-xs sm:inline">{dirtyCount} edited</span>}
             {tracks.length > 0 && <button className="btn btn-ghost" onClick={clearAll}>Clear</button>}
             <button className="btn btn-primary" disabled={!tracks.length || isSaving} onClick={() => void saveAll()}>
               {isSaving ? "Working…" : `Export ${tracks.length || "All"} as ZIP`}
@@ -248,46 +289,49 @@ export default function TagStudio() {
 
       <div className="mx-auto grid max-w-[1600px] gap-4 px-4 py-4 lg:grid-cols-[320px_minmax(0,1fr)_380px] lg:px-8">
         <aside className="panel min-h-[720px] overflow-hidden">
-          <div className="border-b border-white/10 p-4">
+          <div className="border-theme border-b p-4">
             <div
               onDragOver={(event) => event.preventDefault()}
               onDrop={onDrop}
               onClick={() => fileInput.current?.click()}
-              className="cursor-pointer rounded-2xl border border-dashed border-emerald-300/40 bg-emerald-300/[0.04] p-5 text-center transition hover:border-emerald-300/70 hover:bg-emerald-300/[0.07]"
+              className="drop-zone cursor-pointer rounded-2xl border border-dashed p-5 text-center transition"
             >
               <div className="mb-2 text-2xl">♫</div>
               <div className="text-sm font-semibold">Drop MP3 files here</div>
-              <div className="mt-1 text-xs text-white/45">or click to choose files</div>
+              <div className="muted mt-1 text-xs">or click to choose files</div>
               <input ref={fileInput} type="file" accept="audio/mpeg,.mp3" multiple hidden onChange={(event) => event.target.files && void importFiles(event.target.files)} />
             </div>
           </div>
 
-          <div className="flex items-center justify-between px-4 py-3 text-xs text-white/45">
+          <div className="muted flex items-center justify-between px-4 py-3 text-xs">
             <span>{tracks.length} tracks</span>
-            {isLoading && <span className="text-emerald-300">Reading…</span>}
+            {isLoading && <span className="accent-text">Reading…</span>}
           </div>
 
           <div className="max-h-[620px] overflow-y-auto px-2 pb-3">
             {tracks.length === 0 ? (
-              <div className="px-4 py-14 text-center text-sm text-white/35">Your music stays on this device. Import an MP3 to begin.</div>
+              <div className="muted-soft px-4 py-14 text-center text-sm">Your music stays on this device. Import an MP3 to begin.</div>
             ) : tracks.map((track) => (
               <div
                 key={track.id}
-                className={`group mb-1 flex w-full items-center gap-1 rounded-xl p-1 transition ${selectedId === track.id ? "bg-white/10" : "hover:bg-white/[0.05]"}`}
+                className={`track-row group mb-1 flex w-full items-center gap-1 rounded-xl p-1 transition ${selectedId === track.id ? "selected" : ""}`}
               >
                 <button className="flex min-w-0 flex-1 items-center gap-3 p-2 text-left" onClick={() => setSelectedId(track.id)}>
-                  <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-white/5">
-                    {track.cover ? <Image src={track.cover.url} alt="" fill sizes="44px" className="object-cover" unoptimized /> : <div className="grid h-full place-items-center text-white/30">♪</div>}
+                  <div className="cover-thumb relative h-11 w-11 shrink-0 overflow-hidden rounded-lg">
+                    {track.cover ? <Image src={track.cover.url} alt="" fill sizes="44px" className="object-cover" unoptimized /> : <div className="muted-soft grid h-full place-items-center">♪</div>}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{track.tags.title || track.fileName}</div>
-                    <div className="truncate text-xs text-white/45">{track.tags.artist || "Unknown artist"}</div>
+                    <div className="flex min-w-0 items-center gap-2">
+                      {track.dirty && <span className="dirty-dot" title="Edited" />}
+                      <div className="truncate text-sm font-medium">{track.tags.title || track.fileName}</div>
+                    </div>
+                    <div className="muted truncate text-xs">{track.tags.artist || "Unknown artist"}</div>
                   </div>
                 </button>
                 <button
                   aria-label={`Remove ${track.tags.title || track.fileName}`}
                   onClick={() => removeTrack(track.id)}
-                  className="rounded-md px-2 py-1 text-white/25 opacity-0 hover:bg-white/10 hover:text-white group-hover:opacity-100"
+                  className="remove-track rounded-md px-2 py-1 opacity-0 group-hover:opacity-100"
                 >×</button>
               </div>
             ))}
@@ -298,17 +342,20 @@ export default function TagStudio() {
           {!selected ? (
             <div className="grid min-h-[650px] place-items-center text-center">
               <div>
-                <div className="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl border border-white/10 bg-white/[0.03] text-3xl text-white/35">♪</div>
+                <div className="icon-stage muted-soft border-theme mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl border text-3xl">♪</div>
                 <h2 className="text-xl font-semibold">Select an MP3 to edit</h2>
-                <p className="mt-2 max-w-md text-sm text-white/45">Tags are read in your browser. The audio file is not uploaded for editing.</p>
+                <p className="muted mt-2 max-w-md text-sm">Tags are read in your browser. The audio file is not uploaded for editing.</p>
               </div>
             </div>
           ) : (
             <>
-              <div className="mb-6 flex flex-col gap-4 border-b border-white/10 pb-5 xl:flex-row xl:items-center xl:justify-between">
+              <div className="border-theme mb-6 flex flex-col gap-4 border-b pb-5 xl:flex-row xl:items-center xl:justify-between">
                 <div className="min-w-0">
-                  <div className="truncate text-xl font-semibold">{selected.tags.title || selected.fileName}</div>
-                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/45">
+                  <div className="flex min-w-0 items-center gap-2">
+                    {selected.dirty && <span className="dirty-dot" title="Edited" />}
+                    <div className="truncate text-xl font-semibold">{selected.tags.title || selected.fileName}</div>
+                  </div>
+                  <div className="muted mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
                     <span>{formatDuration(selected.duration)}</span>
                     <span>{formatBitrate(selected.bitrate)}</span>
                     <span>{selected.sampleRate ? `${(selected.sampleRate / 1000).toFixed(1)} kHz` : "—"}</span>
@@ -335,9 +382,9 @@ export default function TagStudio() {
                 </label>
               </div>
 
-              <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-white/10 pt-5">
+              <div className="border-theme mt-6 flex flex-wrap items-center gap-3 border-t pt-5">
                 <button className="btn btn-primary" disabled={isSaving} onClick={() => void saveSelected()}>{isSaving ? "Creating MP3…" : "Save updated MP3"}</button>
-                <div className="text-xs text-white/40">Your original file is never overwritten.</div>
+                <div className="muted-soft text-xs">Your original file is never overwritten.</div>
               </div>
             </>
           )}
@@ -347,18 +394,18 @@ export default function TagStudio() {
           <div className="mb-4 flex items-start justify-between gap-3">
             <div>
               <h2 className="font-semibold">Cover Art</h2>
-              <p className="mt-1 text-xs text-white/40">Embedded, uploaded, or suggested automatically.</p>
+              <p className="muted-soft mt-1 text-xs">Embedded, uploaded, or suggested automatically.</p>
             </div>
             {selected && <button className="btn btn-ghost px-3 py-2 text-xs" onClick={() => void searchArtwork(selected, true)}>Refresh</button>}
           </div>
 
           {selected ? (
             <>
-              <div className="relative aspect-square overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
+              <div className="cover-stage border-theme relative aspect-square overflow-hidden rounded-2xl border">
                 {selected.cover ? (
                   <Image src={selected.cover.url} alt="Current cover" fill sizes="340px" className="object-cover" unoptimized />
                 ) : (
-                  <div className="grid h-full place-items-center text-center text-white/30"><div><div className="text-5xl">♪</div><div className="mt-2 text-sm">No embedded artwork</div></div></div>
+                  <div className="muted-soft grid h-full place-items-center text-center"><div><div className="text-5xl">♪</div><div className="mt-2 text-sm">No embedded artwork</div></div></div>
                 )}
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -367,40 +414,40 @@ export default function TagStudio() {
                 <input ref={coverInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(event) => void setCoverFromUpload(event)} />
               </div>
 
-              <div className="my-5 h-px bg-white/10" />
+              <div className="divider my-5 h-px" />
               <div className="mb-3 flex items-center justify-between">
                 <div className="text-sm font-semibold">Automatic suggestions</div>
-                {isSearching && <div className="text-xs text-emerald-300">Searching…</div>}
+                {isSearching && <div className="accent-text text-xs">Searching…</div>}
               </div>
 
-              {searchError && <div className="mb-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] p-3 text-xs text-amber-100">{searchError}</div>}
+              {searchError && <div className="warning-box mb-3 rounded-xl border p-3 text-xs">{searchError}</div>}
               {!selected.tags.artist || (!selected.tags.album && !selected.tags.title) ? (
-                <div className="rounded-xl border border-white/10 p-4 text-xs text-white/40">Add Artist plus Album or Title to search for matching artwork.</div>
+                <div className="empty-box muted border rounded-xl p-4 text-xs">Add Artist plus Album or Title to search for matching artwork.</div>
               ) : artwork.length === 0 && !isSearching ? (
-                <div className="rounded-xl border border-white/10 p-4 text-xs text-white/40">No confident cover results yet. Adjust the tags and press Refresh.</div>
+                <div className="empty-box muted border rounded-xl p-4 text-xs">No confident cover results yet. Adjust the tags and press Refresh.</div>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
                   {artwork.map((suggestion) => (
-                    <button key={suggestion.id} className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.025] text-left transition hover:border-emerald-300/40" onClick={() => void chooseSuggestion(suggestion)}>
-                      <div className="relative aspect-square bg-white/5">
+                    <button key={suggestion.id} className="suggestion-card overflow-hidden rounded-xl border text-left transition" onClick={() => void chooseSuggestion(suggestion)}>
+                      <div className="suggestion-image relative aspect-square">
                         <Image src={suggestion.imageUrl} alt={suggestion.title} fill sizes="160px" className="object-cover" unoptimized />
                       </div>
                       <div className="p-2.5">
                         <div className="truncate text-xs font-semibold">{suggestion.title}</div>
-                        <div className="mt-1 truncate text-[11px] text-white/40">{suggestion.date || suggestion.country || "MusicBrainz"}</div>
-                        <div className="mt-1 text-[11px] font-medium text-emerald-300">{suggestion.score}% match</div>
+                        <div className="muted-soft mt-1 truncate text-[11px]">{suggestion.date || suggestion.country || "MusicBrainz"}</div>
+                        <div className="accent-text mt-1 text-[11px] font-medium">{suggestion.score}% match</div>
                       </div>
                     </button>
                   ))}
                 </div>
               )}
             </>
-          ) : <div className="grid min-h-[500px] place-items-center text-center text-sm text-white/35">Select a track to manage its artwork.</div>}
+          ) : <div className="muted-soft grid min-h-[500px] place-items-center text-center text-sm">Select a track to manage its artwork.</div>}
         </aside>
       </div>
 
-      {message && <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-white/10 bg-[#171b22] px-4 py-3 text-sm shadow-2xl">{message}</div>}
-      <footer className="mx-auto max-w-[1600px] px-5 pb-8 pt-2 text-center text-xs text-white/30">Developed by Ferdinand Degracia — AI Assisted Engineering</footer>
+      {message && <div className="toast fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl border px-4 py-3 text-sm shadow-2xl">{message}</div>}
+      <footer className="muted-soft mx-auto max-w-[1600px] px-5 pb-8 pt-2 text-center text-xs">Developed by Ferdinand Degracia — AI Assisted Engineering</footer>
     </main>
   );
 }
