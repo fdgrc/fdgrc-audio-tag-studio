@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "fdgrc Tag Studio",
-  description: "Privacy-first MP3 metadata and cover art editor",
+  description: "Privacy-first MP3 metadata, Smart Fix, batch editing, lyrics, and cover art tools",
 };
 
 const themeBootScript = `

@@ -342,3 +342,228 @@ button, input, textarea {
     padding-inline: 0.45rem;
   }
 }
+
+/* V1.5 Smart Fix + batch/library tools */
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+select.input {
+  appearance: auto;
+}
+
+.input-compact {
+  min-height: 38px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.75rem;
+}
+
+.version-badge {
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  padding: 0.12rem 0.42rem;
+  color: var(--accent);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.library-strip {
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--surface-soft), var(--surface-faint)), var(--surface);
+  box-shadow: 0 10px 35px var(--shadow);
+}
+
+.library-stat {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  gap: 0.7rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-faint);
+  padding: 0.65rem 0.8rem;
+  color: var(--text);
+  text-align: left;
+  transition: 150ms ease;
+}
+
+.library-stat:hover {
+  border-color: var(--accent-border);
+  background: var(--surface-hover);
+}
+
+.library-stat-value {
+  min-width: 2ch;
+  color: var(--accent);
+  font-size: 1.3rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.library-stat-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.batch-tools {
+  background: var(--accent-soft);
+}
+
+.btn-smart {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.btn-smart:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.text-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--accent);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.text-link:disabled {
+  color: var(--muted-soft);
+  cursor: not-allowed;
+}
+
+.smart-panel {
+  border-color: var(--accent-border);
+  background: linear-gradient(135deg, var(--accent-soft), transparent 65%);
+}
+
+.smart-spark {
+  color: var(--accent);
+}
+
+.smart-diff,
+.cover-tool {
+  border-color: var(--border);
+  background: var(--surface-faint);
+}
+
+.smart-diff-head {
+  background: var(--surface-hover);
+  color: var(--muted);
+}
+
+.smart-diff-row {
+  border-color: var(--border-soft);
+}
+
+.smart-diff-row:hover {
+  background: var(--surface-hover);
+}
+
+.confidence-pill,
+.reason-pill,
+.quality-badge,
+.mini-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--surface-hover);
+  padding: 0.18rem 0.45rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.reason-pill {
+  color: var(--muted);
+}
+
+.quality-badge.good,
+.confidence-high {
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(52, 211, 153, 0.09);
+  color: #34d399;
+}
+
+.quality-badge.medium,
+.confidence-medium {
+  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.08);
+  color: #fbbf24;
+}
+
+.quality-badge.low,
+.confidence-low {
+  border-color: rgba(248, 113, 113, 0.32);
+  background: rgba(248, 113, 113, 0.08);
+  color: #f87171;
+}
+
+.mini-badge {
+  color: var(--muted-soft);
+  font-size: 0.56rem;
+  padding: 0.14rem 0.36rem;
+}
+
+.mini-badge.warning,
+.warning-text {
+  color: #fbbf24;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] .quality-badge.good,
+  :root[data-theme="system"] .confidence-high {
+    color: #047857;
+  }
+  :root[data-theme="system"] .quality-badge.medium,
+  :root[data-theme="system"] .confidence-medium,
+  :root[data-theme="system"] .mini-badge.warning,
+  :root[data-theme="system"] .warning-text {
+    color: #92400e;
+  }
+  :root[data-theme="system"] .quality-badge.low,
+  :root[data-theme="system"] .confidence-low {
+    color: #b91c1c;
+  }
+}
+
+:root[data-theme="light"] .quality-badge.good,
+:root[data-theme="light"] .confidence-high {
+  color: #047857;
+}
+
+:root[data-theme="light"] .quality-badge.medium,
+:root[data-theme="light"] .confidence-medium,
+:root[data-theme="light"] .mini-badge.warning,
+:root[data-theme="light"] .warning-text {
+  color: #92400e;
+}
+
+:root[data-theme="light"] .quality-badge.low,
+:root[data-theme="light"] .confidence-low {
+  color: #b91c1c;
+}
+
+@media (max-width: 1100px) {
+  .topbar {
+    position: static;
+  }
+}
+
+@media (max-width: 640px) {
+  .smart-diff-head,
+  .smart-diff-row {
+    grid-template-columns: 24px 78px minmax(0, 1fr) !important;
+  }
+
+  .smart-diff-head > :nth-child(3),
+  .smart-diff-row > :nth-child(3) {
+    display: none;
+  }
+}

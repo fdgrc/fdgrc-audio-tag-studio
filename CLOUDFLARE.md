@@ -1,134 +1,95 @@
-# Cloudflare Workers deployment — fixed v1.1
+# Cloudflare Workers deployment — V1.5
 
-This project is prepared for **Cloudflare Workers + vinext**. It keeps the normal Next.js scripts for local compatibility and adds vinext scripts for the Worker runtime.
+This project targets **Cloudflare Workers + vinext** and keeps normal Next.js scripts for local development.
 
-> **Important:** This package is preconfigured for the connected Cloudflare Worker name `audiotags`. If you create a different Worker later, change the `name` field in `wrangler.jsonc` to exactly match the Worker name shown in Cloudflare.
+> The Worker name is currently `audiotags` in `wrangler.jsonc`. If your Cloudflare Worker has a different name, change that field to exactly match it.
 
-> The compatibility date is intentionally pinned to `2026-09-06` so Cloudflare builds running in UTC will not reject it as a future date. You can update it later after deployment.
+> The compatibility date remains pinned to `2026-09-06` to avoid the future-date rejection encountered in the earlier deployment. Update it later only to a date Cloudflare already accepts.
 
-## 1. Install
+## Install
 
 ```bash
 npm install
 ```
 
-## 2. Local development
-
-Normal Next.js development remains available:
+## Local development
 
 ```bash
 npm run dev
 ```
 
-To run through vinext / Vite instead:
+or through vinext:
 
 ```bash
 npm run dev:vinext
 ```
 
-Open `http://localhost:3000` (or the port printed by vinext).
+## Configure lookup identification
 
-## 3. Configure MusicBrainz identification
-
-MusicBrainz asks API clients to identify themselves with a useful contact.
-
-For local development, copy `.env.example` to `.env.local` and replace the placeholder:
+Copy `.env.example` to `.env.local` for local Next.js development. For production, add these Worker environment variables in Cloudflare:
 
 ```env
-MUSICBRAINZ_USER_AGENT="fdgrc-tag-studio/1.0 (you@example.com)"
+MUSICBRAINZ_USER_AGENT="fdgrc-tag-studio/1.5 (you@example.com)"
+LRCLIB_USER_AGENT="fdgrc-tag-studio/1.5 (you@example.com)"
 ```
 
-For Cloudflare production, add a Worker environment variable named `MUSICBRAINZ_USER_AGENT` in the Cloudflare dashboard under your Worker settings. You can also configure it through Wrangler/CI.
+These are not credentials. They identify the application when it calls public metadata/lyrics services.
 
-This value is not an API key or password; it is simply the application identification sent to MusicBrainz.
-
-## 4. Compatibility check
+## Compatibility + build
 
 ```bash
 npm run check:vinext
-```
-
-## 5. Production build
-
-```bash
 npm run build:vinext
 ```
 
-## 6. Preview using the Workers runtime
+## Preview Workers runtime
 
 ```bash
 npm run preview:worker
 ```
 
-After the server starts, check:
+Useful checks:
 
-- `/` — Tag Studio
-- `/api/health` — Worker/API health response
-- `/api/artwork/search?artist=Daft%20Punk&album=Discovery&title=One%20More%20Time` — metadata/artwork search test
+- `/` — Tag Studio V1.5
+- `/api/health` — API health
+- `/api/artwork/search?artist=Daft%20Punk&album=Discovery&title=One%20More%20Time`
+- `/api/metadata/search?artist=Daft%20Punk&title=One%20More%20Time&album=Discovery&duration=320`
+- `/api/lyrics/search?artist=Daft%20Punk&title=One%20More%20Time&album=Discovery&duration=320`
 
-## 7. Deploy from your computer
-
-Authenticate once:
+## Deploy locally
 
 ```bash
 npx wrangler login
-```
-
-Then deploy:
-
-```bash
 npm run deploy
 ```
 
-The vinext deploy command builds the application and deploys it to Cloudflare Workers.
+## Workers Builds / Git repository
 
-If Wrangler asks for an account, either add `account_id` to `wrangler.jsonc` or set `CLOUDFLARE_ACCOUNT_ID` in your shell/CI environment.
+Recommended Cloudflare settings:
 
-## 8. Deploy from a Git repository with Workers Builds
+- **Build command:** `npm run build:vinext`
+- **Deploy command:** `npm run deploy:built`
+- **Root directory:** `/`
 
-In Cloudflare Dashboard:
+Add the two User-Agent variables above to your Worker environment settings.
 
-1. Go to **Workers & Pages**.
-2. Choose **Create application** / **Import a repository**.
-3. Select the repository containing this project.
-4. Use the project root as the root directory.
-5. Recommended production settings:
-   - **Build command:** `npm run build:vinext`
-   - **Deploy command:** `npm run deploy:built`
-6. Add the `MUSICBRAINZ_USER_AGENT` environment variable.
-7. Save and deploy.
-
-Alternatively, leave the build command empty and use `npm run deploy` as the deploy command. The deploy helper will perform the build itself.
-
-## Included Cloudflare files
-
-- `vite.config.ts` — vinext + Cloudflare Vite plugin
-- `wrangler.jsonc` — Worker configuration
-- `.dev.vars.example` — example Worker-local environment values
-- `CLOUDFLARE.md` — this guide
-
-## Why there is no custom Worker file
-
-vinext provides the App Router Worker entry point (`vinext/server/app-router-entry`). The Next.js `app/api/**/route.ts` handlers are compiled into the Worker automatically.
-
-## Current architecture
-
-The MP3 itself stays in the browser. The Worker handles only lightweight public metadata/artwork requests:
+## Architecture
 
 ```text
 Browser
-  ├─ MP3 parsing
-  ├─ ID3 editing
-  ├─ artwork embedding
-  ├─ audio preview
+  ├─ MP3 parse + playback
+  ├─ ID3 edit/write
+  ├─ filename cleanup
+  ├─ duplicate + quality analysis
+  ├─ cover crop/resize/compression
+  ├─ batch editing
   └─ ZIP export
         │
-        └─ text metadata only
+        └─ lookup text/duration only
              ▼
 Cloudflare Worker
-  ├─ /api/artwork/search
-  └─ /api/artwork/image
-             │
-             ▼
-MusicBrainz + Cover Art Archive
+  ├─ /api/metadata/search ── MusicBrainz
+  ├─ /api/artwork/search  ── MusicBrainz + Cover Art Archive
+  ├─ /api/artwork/image   ── validated image proxy
+  └─ /api/lyrics/search   ── LRCLIB
 ```

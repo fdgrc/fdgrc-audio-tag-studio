@@ -18,8 +18,11 @@ export type CoverAsset = {
   url: string;
   data?: ArrayBuffer;
   mimeType: string;
-  source: "embedded" | "upload" | "suggestion";
+  source: "embedded" | "upload" | "suggestion" | "optimized";
   label?: string;
+  width?: number;
+  height?: number;
+  bytes?: number;
 };
 
 export type TrackItem = {
@@ -32,6 +35,7 @@ export type TrackItem = {
   tags: EditableTags;
   originalTags: EditableTags;
   cover?: CoverAsset;
+  originalCover?: CoverAsset;
   audioUrl: string;
   dirty: boolean;
 };
@@ -46,4 +50,27 @@ export type ArtworkSuggestion = {
   score: number;
   imageUrl: string;
   source: "MusicBrainz / Cover Art Archive";
+};
+
+export type MetadataSuggestion = {
+  id: string;
+  recordingId: string;
+  releaseId?: string;
+  score: number;
+  source: "MusicBrainz";
+  tags: Partial<EditableTags>;
+  reasons: string[];
+  coverUrl?: string;
+};
+
+export type LyricsLookupResult = {
+  id: number;
+  trackName: string;
+  artistName: string;
+  albumName?: string;
+  duration?: number;
+  instrumental: boolean;
+  plainLyrics?: string;
+  syncedLyrics?: string;
+  source: "LRCLIB";
 };

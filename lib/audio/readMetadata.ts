@@ -24,6 +24,7 @@ function pictureToCover(picture: NonNullable<Awaited<ReturnType<typeof parseBlob
     mimeType: picture.format || "image/jpeg",
     source: "embedded",
     label: "Embedded artwork",
+    bytes: picture.data.length,
   };
 }
 
@@ -51,6 +52,8 @@ export async function readTrack(file: File): Promise<TrackItem> {
   };
 
   const picture = common.picture?.[0];
+  const cover = picture ? pictureToCover(picture) : undefined;
+  const originalCover = picture ? pictureToCover(picture) : undefined;
 
   return {
     id: crypto.randomUUID(),
@@ -61,7 +64,8 @@ export async function readTrack(file: File): Promise<TrackItem> {
     sampleRate: metadata.format.sampleRate,
     tags,
     originalTags: { ...tags },
-    cover: picture ? pictureToCover(picture) : undefined,
+    cover,
+    originalCover,
     audioUrl: URL.createObjectURL(file),
     dirty: false,
   };

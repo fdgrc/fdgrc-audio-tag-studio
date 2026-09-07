@@ -4,7 +4,7 @@ import type { ArtworkSuggestion } from "@/types/audio";
 const MB_BASE = "https://musicbrainz.org/ws/2";
 const USER_AGENT =
   process.env.MUSICBRAINZ_USER_AGENT ||
-  "fdgrc-tag-studio/1.0 (set MUSICBRAINZ_USER_AGENT before public deployment)";
+  "fdgrc-tag-studio/1.5 (set MUSICBRAINZ_USER_AGENT before public deployment)";
 
 type MBRelease = {
   id: string;
